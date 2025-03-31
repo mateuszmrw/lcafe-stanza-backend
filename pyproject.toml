@@ -3,9 +3,9 @@ name = "cafe-backend"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
-    "ebooklib>=0.18",
+    "ebooklib>=0.20",
     "fastapi[standard]",
     "lxml>=5.3.1",
     "lxml-html-clean>=0.4.1",
