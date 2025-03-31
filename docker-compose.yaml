@@ -15,11 +15,12 @@ services:
             DB_DATABASE: ${DB_DATABASE:-linguacafe}
             DB_USERNAME: ${DB_USERNAME:-linguacafe}
             DB_PASSWORD: ${DB_PASSWORD:-linguacafe}
-            TZ: Europe/Warsaw
-            DB_HOST: ${DB_HOST:-linguacafe-database}
             DB_PORT: ${DB_PORT:-3306}
             BACKUP_INTERVAL: "59 23 * * *"
             MAX_SAVED_BACKUPS: 14
+            PYTHON_CONTAINER_NAME: linguacafe-python-service-stanza
+            REDIS_HOST: linguacafe-redis-stanza
+            DB_HOST: linguacafe-database-stanza
         ports:
             - "6001:6001"
             - "9191:80"
@@ -39,10 +40,7 @@ services:
               MYSQL_USER: ${DB_USERNAME:-linguacafe}
               MYSQL_PASSWORD: ${DB_PASSWORD:-linguacafe}
               MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-linguacafe}
-              SERVICE_NAME: linguacafe
-              PYTHON_CONTAINER_NAME: linguacafe-python-service-stanza
-              REDIS_HOST: linguacafe-redis-stanza
-              DB_HOST: linguacafe-database-stanza
+              SERVICE_NAME: linguacafe-database-stanza
           healthcheck:
               test: ["CMD", 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${DB_ROOT_PASSWORD:-linguacafe}']
               interval: 10s
