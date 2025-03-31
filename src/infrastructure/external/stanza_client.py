@@ -20,9 +20,9 @@ class StanzaClient:
     def __init__(self, config: StanzaConfig):
         self.config = config
         self.model_configs: Dict[str, ModelConfig] = {
-            "english": ModelConfig(),
-            "russian": ModelConfig(),
-            "polish": ModelConfig(),
+            "english": ModelConfig(use_gpu=config.use_gpu),
+            "russian": ModelConfig(use_gpu=config.use_gpu),
+            "polish": ModelConfig(use_gpu=config.use_gpu),
         }
         self.installed_languages: list[str] = []
         self.loaded_languages: Dict[str, stanza.Pipeline] = {}
