@@ -1,0 +1,31 @@
+[project]
+name = "cafe-backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ebooklib>=0.18",
+    "fastapi[standard]",
+    "lxml>=5.3.1",
+    "lxml-html-clean>=0.4.1",
+    "newspaper4k>=0.9.3.1",
+    "pydantic==2.11.1",
+    "pydantic-settings==2.8.1",
+    "stanza==1.10.1",
+    "uvicorn==0.27.1",
+]
+
+[dependency-groups]
+dev = [
+    "black==24.1.1",
+    "isort==5.13.2",
+    "mypy==1.8.0",
+    "pre-commit==3.6.0",
+    "pytest==8.0.0",
+    "pytest-asyncio==0.23.5",
+    "ruff>=0.11.2",
+]
+
+[tool.uv]
+default-groups = "all"

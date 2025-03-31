@@ -1,0 +1,78 @@
+services:
+
+     webserver:
+        image: ghcr.io/simjanos-dev/linguacafe-webserver:${VERSION:-latest}
+        container_name: linguacafe-webserver-stanza
+        restart: unless-stopped
+        depends_on:
+            mysql:
+                condition: service_healthy
+        volumes:
+          - ./storage:/var/www/html/storage:z
+          - ./docker/supervisor-horizon.conf:/etc/supervisor/conf.d/horizon.conf
+          - ./docker/supervisor-websockets.conf:/etc/supervisor/conf.d/websockets.conf
+        environment:
+            DB_DATABASE: ${DB_DATABASE:-linguacafe}
+            DB_USERNAME: ${DB_USERNAME:-linguacafe}
+            DB_PASSWORD: ${DB_PASSWORD:-linguacafe}
+            TZ: Europe/Warsaw
+            DB_HOST: ${DB_HOST:-linguacafe-database}
+            DB_PORT: ${DB_PORT:-3306}
+            BACKUP_INTERVAL: "59 23 * * *"
+            MAX_SAVED_BACKUPS: 14
+        ports:
+            - "6001:6001"
+            - "9191:80"
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
+     mysql:
+          image: mysql:8.0
+          container_name: linguacafe-database-stanza
+          restart: unless-stopped
+          tty: true
+          ports:
+            - "3306:3306"
+          volumes:
+            - ./database:/var/lib/mysql:z
+          environment:
+              MYSQL_DATABASE: ${DB_DATABASE:-linguacafe}
+              MYSQL_USER: ${DB_USERNAME:-linguacafe}
+              MYSQL_PASSWORD: ${DB_PASSWORD:-linguacafe}
+              MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-linguacafe}
+              SERVICE_NAME: linguacafe
+              PYTHON_CONTAINER_NAME: linguacafe-python-service-stanza
+              REDIS_HOST: linguacafe-redis-stanza
+              DB_HOST: linguacafe-database-stanza
+          healthcheck:
+              test: ["CMD", 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${DB_ROOT_PASSWORD:-linguacafe}']
+              interval: 10s
+              timeout: 5s
+              retries: 10
+          command: mysqld --general-log=1 --general-log-file=/var/lib/mysql/general-log.log
+     redis:
+          image: redis:7.2-alpine
+          container_name: linguacafe-redis-stanza
+          restart: unless-stopped
+          volumes: 
+              - ./cache:/data
+          ports:
+              - "6379:6379"
+          environment:
+              REDIS_PASSWORD: linguacafe
+              REDIS_PORT: 6379
+              REDIS_DATABASES: 16
+     python:
+          build:
+            context: .
+            dockerfile: docker/Dockerfile
+          container_name: linguacafe-python-service-stanza
+          restart: unless-stopped
+          ports:
+          - "8678:8678"
+          tty: true
+          environment:
+          - languages=["english"]
+          - use_gpu=false
+          volumes:
+            - ./stanza-models:/app/stanza_resources
+            - ./storage:/var/www/html/storage

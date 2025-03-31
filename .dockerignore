@@ -1,0 +1,20 @@
+.venv
+.git
+.gitignore
+.vscode
+.env
+.env.local
+.env.development.local
+.env.test.local
+
+# Docker
+docker-compose.yml
+docker-compose.override.yml
+docker-compose.override.yml.example
+docker-compose.override.yml.example
+
+stanza-models/
+storage/
+database/
+cache/
+docker/
