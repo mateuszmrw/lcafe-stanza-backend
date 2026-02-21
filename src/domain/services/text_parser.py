@@ -1,38 +1,37 @@
-from typing import List
 import re
+from typing import List
 
-SENTENCE_ENDINGS = ['NEWLINE', '？', '！', '。', '?', '!', '.', '»', '«']
-        
+SENTENCE_ENDINGS = re.compile(r"(?<=[.!?。！？])\s+|(?<=»)\s+")
+
+
 class TextParser:
     def __init__(self, text: str, chunkSize: int = 3000):
         self.text = text
         self.chunkSize = chunkSize
 
-    def parse(self) -> list[str]:
-        text = re.sub(r'\r?\n', ' NEWLINE ', self.text)
-        text = text.replace('\xa0', ' ')
+    def _split_sentences(self, paragraph: str) -> List[str]:
+        parts = SENTENCE_ENDINGS.split(paragraph)
+        return [p.strip() for p in parts if p.strip()]
 
-        sentence_pattern = '|'.join(map(re.escape, SENTENCE_ENDINGS))
-        sentences = re.split(f'({sentence_pattern})', text)
-        
-        sentences = [''.join(sentences[i:i+2]) for i in range(0, len(sentences), 2)]
-        
+    def parse(self) -> List[str]:
+        paragraphs = re.split(r"\r?\n+", self.text)
+        paragraphs = [p.replace("\xa0", " ").strip() for p in paragraphs if p.strip()]
+
         chunks: List[str] = []
-        current_chunk = []
+        current_lines: List[str] = []
         current_size = 0
-        
-        for sentence in sentences:
-            sentence_size = len(sentence.replace(' NEWLINE ', ''))
-            
-            if current_size + sentence_size > self.chunkSize and current_chunk:
-                chunks.append(''.join(current_chunk).replace(' NEWLINE ', '\r\n'))
-                current_chunk = []
-                current_size = 0
-            
-            current_chunk.append(sentence)
-            current_size += sentence_size
-        
-        if current_chunk:
-            chunks.append(''.join(current_chunk).replace(' NEWLINE ', '\r\n'))
+
+        for paragraph in paragraphs:
+            for sentence in self._split_sentences(paragraph):
+                size = len(sentence)
+                if current_size + size > self.chunkSize and current_lines:
+                    chunks.append("\r\n".join(current_lines))
+                    current_lines = []
+                    current_size = 0
+                current_lines.append(sentence)
+                current_size += size
+
+        if current_lines:
+            chunks.append("\r\n".join(current_lines))
 
         return chunks

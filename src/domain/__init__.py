@@ -1,4 +1,10 @@
 from .models import InstallLanguageRequest
-from .services import Tokenizer, TextParser, BookParser
+from .services import BookParser, EbookChunker, TextParser, Tokenizer
 
-__all__ = ["InstallLanguageRequest", "Tokenizer", "TextParser", "BookParser"]
+__all__ = [
+    "InstallLanguageRequest",
+    "Tokenizer",
+    "TextParser",
+    "BookParser",
+    "EbookChunker",
+]
