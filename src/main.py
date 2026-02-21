@@ -3,9 +3,10 @@ import logging
 from fastapi import FastAPI
 
 from src.api.middleware import setup_cors, setup_error_handling, setup_logging
+from src.api.routes import content as content_router
 from src.api.routes import health as health_router
-from src.api.routes import models as models_router
-from src.api.routes import tokenize as tokenize_router
+from src.api.routes import nlp as nlp_router
+from src.api.routes import stanza as stanza_router
 from src.core import get_settings
 
 settings = get_settings()
@@ -22,6 +23,7 @@ setup_logging(app)
 setup_cors(app)
 setup_error_handling(app)
 
-app.include_router(models_router.router)
+app.include_router(stanza_router.router)
 app.include_router(health_router.router)
-app.include_router(tokenize_router.router)
+app.include_router(nlp_router.router)
+app.include_router(content_router.router)

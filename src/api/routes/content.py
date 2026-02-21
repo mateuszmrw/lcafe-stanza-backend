@@ -1,21 +1,13 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from newspaper import Article
 
-from src.api.dependencies import get_tokenizer
-from src.domain import TextParser, Tokenizer
-from src.domain.models.book import ImportBookRequest
-from src.domain.models.text import GetWebsiteTextRequest, ImportTextRequest
-from src.domain.services.book_chunker import EbookChunker
-from src.domain.services.book_parser import BookParser
+from src.api.schemas.content import GetWebsiteTextRequest, ImportBookRequest, ImportTextRequest
+from src.domain.nlp.services.book_chunker import BookChunker
+from src.domain.nlp.services.book_parser import BookParser
+from src.domain.nlp.services.text_parser import TextParser
 
 router = APIRouter()
-
-
-@router.post("/tokenizer")
-def tokenize(tokenizer: Tokenizer = Depends(get_tokenizer)) -> JSONResponse:
-    tokens = tokenizer.tokenize()
-    return JSONResponse(content=tokens)
 
 
 @router.post("/tokenizer/import-text")
@@ -37,6 +29,6 @@ async def get_website_text(request: GetWebsiteTextRequest) -> JSONResponse:
 def import_book(request: ImportBookRequest) -> JSONResponse:
     book_parser = BookParser(request.importFile, request.chapterSortMethod)
     chapters = book_parser.parse()
-    chunks = EbookChunker(chapters, chunk_size=3000).chunk()
+    chunks = BookChunker(chapters, chunk_size=3000).chunk()
     epubPages = list(map(lambda item: item.text, chunks))
     return JSONResponse(content=epubPages)

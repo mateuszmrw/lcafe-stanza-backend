@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from src.api.dependencies import get_stanza_client_dependency
+from src.api.schemas.stanza import InstallLanguageRequest
 from src.core.config import get_settings
-from src.domain.models.language import InstallLanguageRequest
 from src.infrastructure import StanzaClient
 
 router = APIRouter(prefix="/models")

@@ -1,3 +1,3 @@
-from .external import StanzaClient, StanzaConfig, ModelConfig
+from .stanza import StanzaClient, StanzaConfig, ModelConfig
 
 __all__ = ["StanzaClient", "StanzaConfig", "ModelConfig"]

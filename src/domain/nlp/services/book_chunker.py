@@ -1,14 +1,15 @@
 import logging
 from typing import List
 
-from src.domain.models.text import ChunkedText
-from src.domain.services.book_parser import ParsedDocumentItem
-from src.domain.services.text_parser import TextParser
+from src.domain.nlp.models import ChunkedText
+
+from .book_parser import ParsedDocumentItem
+from .text_parser import TextParser
 
 logger = logging.getLogger(__name__)
 
 
-class EbookChunker:
+class BookChunker:
     def __init__(self, chapters: List[ParsedDocumentItem], chunk_size: int = 3000):
         self.chapters = chapters
         self.chunk_size = chunk_size

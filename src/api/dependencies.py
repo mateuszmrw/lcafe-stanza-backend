@@ -3,8 +3,8 @@ from functools import lru_cache
 from fastapi import Body, Depends
 
 from src.core import get_settings
-from src.domain.services.tokenizer import Tokenizer
-from src.infrastructure.external.stanza_client import (
+from src.domain.nlp.services.tokenizer import Tokenizer
+from src.infrastructure.stanza.client import (
     StanzaClient,
     StanzaConfig,
     get_stanza_client,

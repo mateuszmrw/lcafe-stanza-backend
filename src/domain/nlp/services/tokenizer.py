@@ -1,7 +1,7 @@
 import stanza
 
-from src.domain.models.token import Token
-from src.infrastructure.external.stanza_client import StanzaClient
+from src.domain.nlp.models import Token
+from src.infrastructure.stanza.client import StanzaClient
 
 
 class Tokenizer:

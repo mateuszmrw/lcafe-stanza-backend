@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from ebooklib import ITEM_DOCUMENT, ITEM_NAVIGATION, epub
 from pydantic import BaseModel
 
-from src.domain.models.book import ParsedNavigationItem
+from src.domain.nlp.models import ParsedNavigationItem
 
 logger = logging.getLogger()
 
