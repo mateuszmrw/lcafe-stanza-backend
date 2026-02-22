@@ -1,0 +1,8 @@
+{
+  "name": "@slovo/backend",
+  "private": true,
+  "scripts": {
+    "dev": "uv run fastapi dev src/main.py --port 8678",
+    "lint": "uv run ruff check src && uv run mypy src"
+  }
+}

@@ -1,66 +1,55 @@
-## Overview
+# Cafe — Self-hosted LingQ Clone
 
-This backend service provides text processing and tokenization capabilities for the LinguaCafe project using the Stanza NLP library. It processes text from ebooks and other sources to extract linguistic features like lemmas, parts of speech, and gender information.
+Monorepo containing the backend NLP service and the Next.js web frontend.
 
-It should work as drop-in replacement for the standard Python LinguaCafe backend, supporting majority of Python backend features - currently only handling subtitles is missing, planned in future.
+## Structure
 
-Example of usage is available in docker-compose.yaml file in root of repo.
+```
+apps/
+  backend/   FastAPI + Stanza NLP service (Python)
+  web/       Next.js 15 frontend (TypeScript)
+```
 
-Currently CUDA support is not tested since I do not have a GPU that supports it.
+## Prerequisites
 
-The backend service is built with FastAPI and provides a REST API for text processing. It can be run standalone or as part of the full LinguaCafe stack using Docker Compose.
+- Node.js 20+, npm 10+
+- Python 3.12+, [uv](https://docs.astral.sh/uv/)
+- Docker + Docker Compose
 
-Key features:
-- FastAPI REST API endpoints for text processing
-- Configurable language model loading
-- Efficient resource management through singleton pattern
-- Automatic model downloading
+## Getting started
 
-Warning: Stanza is way more resource heavy than SpaCy, that comes by default with LinguaCafe project. I would not recommend trying it out without fast machine.
+### Install JS dependencies
 
-## Features
+```bash
+npm install
+```
 
-- Supports English, Polish and Russian languages
-- Tokenizes text and extracts linguistic features:
-  - Word forms
-  - Lemmas
-  - Parts of speech
-  - Gender (where available)
+### Run everything with Docker
 
-## Components
+```bash
+docker compose up
+```
 
-### Book Parser
-- Handles EPUB file processing
-- Extracts and cleans text content
-- Supports different chapter sorting methods (spine-based or default)
+This starts:
+- PostgreSQL on port 5432
+- Python backend on port 8678
 
-### Text Parser  
-- Breaks text into chunks of configurable size
-- Preserves sentence boundaries
-- Handles various sentence endings and special characters
+### Run individually
 
-### Tokenizer
-- Processes text using Stanza models
-- Extracts linguistic features
-- Returns structured token information
+```bash
+# Backend
+cd apps/backend
+uv run fastapi dev src/main.py --port 8678
 
-### Stanza Client
-- Manages Stanza language models
-- Handles model downloading and loading
-- Implements singleton pattern for resource efficiency
+# Frontend
+cd apps/web
+npm run dev
+```
 
-## Setup
+## Turbo tasks
 
-The backend requires Stanza language models for the supported languages. Models will be automatically downloaded when first needed.
-
-## Supported Languages
-
-Currently supports:
-- English
-- Polish 
-- Russian
-
-Each language uses the following Stanza processors:
-- tokenize
-- pos (Part of Speech)
-- lemma
+```bash
+npm run dev      # dev servers for all apps
+npm run build    # production build for all apps
+npm run lint     # lint all apps
+```

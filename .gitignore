@@ -1,133 +1,64 @@
-.DS_STORE
+# OS
+.DS_Store
+Thumbs.db
 
-# Byte-compiled / optimized / DLL files
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
+.venv/
 *.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+.eggs/
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# Env files
+.env
+.env.*
+!.env.example
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
+# Test / coverage
 .coverage
 .coverage.*
-.cache
-nosetests.xml
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
 coverage.xml
 *.cover
-.hypothesis/
-.pytest_cache/
+.cache
+nosetests.xml
 
-# Translations
-*.mo
-*.pot
+# Tooling caches
+.mypy_cache/
+.dmypy.json
+.pyre/
+.ruff_cache/
+.turbo/
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# celery beat schedule file
-celerybeat-schedule
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
+# IDE
+.ropeproject/
 .spyderproject
 .spyproject
 
-# Rope project settings
-.ropeproject
+# Docker volumes (local bind mounts — never commit data)
+apps/backend/stanza-models/
+apps/backend/storage/
+apps/backend/database/
+apps/backend/cache/
 
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# Docker volumes
-stanza-models/
-storage/
-database/
-cache/
-stanza-resources/
+# Misc
+*.log
+*.manifest
+*.spec
+pip-log.txt

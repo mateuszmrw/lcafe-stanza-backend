@@ -1,0 +1,17 @@
+{
+  "name": "slovo",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "format": "turbo format"
+  },
+  "packageManager": "npm@11.9.0",
+  "devDependencies": {
+    "turbo": "^2.4.4"
+  }
+}

@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 
 class Settings(BaseSettings):
-    project_name: str = "CafeLingua Stanza Backend"
+    project_name: str = "Slovo Backend"
     debug: bool = False
     languages: list[str] = ["russian", "polish"] 
     use_gpu: bool = False

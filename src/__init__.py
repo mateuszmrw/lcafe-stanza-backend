@@ -1,3 +1,0 @@
-"""
-LinguaCafe Stanza Backend package.
-""" 

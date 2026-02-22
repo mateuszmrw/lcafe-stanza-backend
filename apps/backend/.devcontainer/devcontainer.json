@@ -1,0 +1,33 @@
+{
+  "name": "slovo-backend",
+  "dockerComposeFile": [
+    "../docker-compose.yaml",
+    "docker-compose.devcontainer.yaml",
+  ],
+  "service": "python",
+  "workspaceFolder": "/app",
+
+  "forwardPorts": [8678],
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-python.black-formatter",
+        "ms-python.mypy-type-checker",
+        "tamasfe.even-better-toml",
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/app/.venv/bin/python",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.black-formatter",
+        },
+      },
+    },
+  },
+
+  "postCreateCommand": "uv sync --frozen",
+}

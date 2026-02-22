@@ -1,0 +1,3 @@
+"""
+Slovo Backend package.
+""" 

@@ -1,0 +1,15 @@
+services:
+  python:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ..:/app:cached
+      - ../stanza-models:/app/stanza_resources
+      - ../storage:/var/www/html/storage
+    environment:
+      - languages=["english"]
+      - use_gpu=false
+    command: sleep infinity
+    ports:
+      - "8678:8678"
