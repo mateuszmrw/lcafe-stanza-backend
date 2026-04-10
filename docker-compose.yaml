@@ -1,6 +1,6 @@
 services:
   postgresql:
-    image: postgres:15.2-alpine
+    image: postgres:15-alpine
     container_name: postgresql-stanza
     restart: unless-stopped
     ports:
@@ -9,27 +9,115 @@ services:
       POSTGRES_DB: ${DB_DATABASE:-db}
       POSTGRES_USER: ${DB_USERNAME:-user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
-      POSTGRES_PORT: 5432
     volumes:
-      - ./apps/backend/database:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USERNAME:-user} -d ${DB_DATABASE:-db}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
-  python:
+  redis:
+    image: redis:7-alpine
+    container_name: redis-slovo
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
     build:
       context: ./apps/backend
       dockerfile: docker/Dockerfile
-    container_name: python-service-stanza
+    container_name: slovo-backend
     restart: unless-stopped
     ports:
       - "8678:8678"
-    tty: true
     environment:
-      languages: ["english"]
-      use_gpu: false
-      debug: true
-      POSTGRES_DB: ${DB_DATABASE:-db}
-      POSTGRES_USER: ${DB_USERNAME:-user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
-      POSTGRES_PORT: 5432
+      debug: "true"
+      languages: '["english", "russian", "polish"]'
+      use_gpu: "false"
+      db_host: postgresql
+      db_port: "5432"
+      db_database: ${DB_DATABASE:-db}
+      db_username: ${DB_USERNAME:-user}
+      db_password: ${DB_PASSWORD:-password}
+      jwt_secret: ${jwt_secret:-change-me-in-production}
+      db_encryption_key: ${db_encryption_key:-change-me-in-production}
+      redis_url: redis://redis:6379
+      admin_email: ${ADMIN_EMAIL:-}
+      admin_password: ${ADMIN_PASSWORD:-}
+      deepl_api_key: ${DEEPL_API_KEY:-}
     volumes:
-      - ./apps/backend/stanza-models:/app/stanza_resources
-      - ./apps/backend/storage:/app/storage
+      - stanza_models:/app/stanza_resources
+      - storage:/app/storage
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  arq-worker:
+    build:
+      context: ./apps/backend
+      dockerfile: docker/Dockerfile
+    container_name: slovo-arq-worker
+    restart: unless-stopped
+    command: ["/app/.venv/bin/arq", "src.worker.settings.WorkerSettings"]
+    environment:
+      debug: "false"
+      languages: '["english", "russian", "polish"]'
+      use_gpu: "false"
+      db_host: postgresql
+      db_port: "5432"
+      db_database: ${DB_DATABASE:-db}
+      db_username: ${DB_USERNAME:-user}
+      db_password: ${DB_PASSWORD:-password}
+      jwt_secret: ${jwt_secret:-change-me-in-production}
+      db_encryption_key: ${db_encryption_key:-change-me-in-production}
+      redis_url: redis://redis:6379
+      deepl_api_key: ${DEEPL_API_KEY:-}
+    volumes:
+      - stanza_models:/app/stanza_resources
+      - storage:/app/storage
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      # Context is the monorepo root — needed so Docker can access the root
+      # package-lock.json (npm workspaces keeps a single lockfile at root).
+      context: ./
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked into the JS bundle at build time — must be a URL the browser
+        # can reach. port 8678 is published on the host, so localhost works.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8678}
+    container_name: slovo-web
+    restart: unless-stopped
+    ports:
+      - "4412:3000"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  stanza_models:
+    driver: local
+  storage:
+    driver: local

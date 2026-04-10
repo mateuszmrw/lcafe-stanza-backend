@@ -1,9 +1,8 @@
+import io
 import logging
-import re
+import zipfile
 from typing import List
 
-import lxml.html
-import lxml_html_clean
 from bs4 import BeautifulSoup
 from ebooklib import ITEM_DOCUMENT, ITEM_NAVIGATION, epub
 from pydantic import BaseModel
@@ -26,25 +25,73 @@ class BookParser:
         self.import_file = import_file
         self.chapter_sort_method = chapter_sort_method
 
+    # Block-level tags — each becomes its own paragraph (separated by \n\n).
+    _BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "section"}
+    # Tags removed entirely (content discarded).
+    _KILL_TAGS = {"script", "style", "head", "rp", "rt", "nav", "aside"}
+
     def read_epub_file(self):
-        return epub.read_epub(self.import_file)
+        # Some EPUBs (common on macOS) store META-INF/container.xml with non-standard
+        # casing (e.g. "meta-inf/container.xml"). ebooklib does a case-sensitive lookup
+        # on Linux, so we normalise the ZIP entries before handing off to ebooklib.
+        _EPUB_RENAMES = {
+            "meta-inf/container.xml": "META-INF/container.xml",
+        }
+        with open(self.import_file, "rb") as fh:
+            raw = fh.read()
 
-    def get_html_cleaner(self) -> lxml_html_clean.Cleaner:
-        return lxml_html_clean.Cleaner(
-            allow_tags=[""],
-            remove_unknown_tags=False,
-            kill_tags=["rp", "rt"],
-            page_structure=False,
-        )
+        try:
+            src_zf_check = zipfile.ZipFile(io.BytesIO(raw))
+        except zipfile.BadZipFile as exc:
+            raise ValueError(f"File is not a valid ZIP/EPUB archive: {exc}") from exc
 
-    def parse_document_item(
-        self, item, spine: int, chapter_name: str
-    ) -> ParsedDocumentItem:
-        html_cleaner = self.get_html_cleaner()
-        content_str = item.get_content().decode()
-        content_str = re.sub(r"<\?xml[^>]+\?>", "", content_str, count=1)
-        cleanHtmlEpubPage = html_cleaner.clean_html(content_str)
-        text_content = str(lxml.html.fromstring(cleanHtmlEpubPage).text_content())
+        with src_zf_check as src_zf:
+            all_names = [info.filename for info in src_zf.infolist()]
+            logger.info("EPUB ZIP entries: %s", all_names)
+            names_lower = {info.filename.lower(): info.filename for info in src_zf.infolist()}
+            needs_fix = any(
+                actual != canonical
+                for lower, canonical in _EPUB_RENAMES.items()
+                if (actual := names_lower.get(lower)) is not None
+            )
+            if not needs_fix:
+                return epub.read_epub(self.import_file)
+
+            logger.info("Normalising EPUB ZIP entry casing for: %s", self.import_file)
+            # Rewrite the ZIP with corrected entry names into a buffer.
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as dst_zf:
+                for info in src_zf.infolist():
+                    data = src_zf.read(info.filename)
+                    canonical = _EPUB_RENAMES.get(info.filename.lower(), info.filename)
+                    dst_zf.writestr(canonical, data)
+            buf.seek(0)
+
+        return epub.read_epub(io.BytesIO(buf.read()))
+
+    def parse_document_item(self, item, spine: int, chapter_name: str) -> ParsedDocumentItem:
+        content = item.get_content().decode("utf-8", errors="replace")
+        soup = BeautifulSoup(content, "html.parser")
+
+        for tag in soup(list(self._KILL_TAGS)):
+            tag.decompose()
+
+        # Collect leaf block elements (those with no nested block descendants)
+        # to avoid duplicating text from parent containers.
+        blocks: list[str] = []
+        for el in soup.find_all(self._BLOCK_TAGS):
+            if el.find(self._BLOCK_TAGS):
+                continue  # parent container — its children will be visited instead
+            text = el.get_text(" ", strip=True).replace("\xa0", " ")
+            if text:
+                blocks.append(text)
+
+        # Fallback: no block elements found (e.g. plain text or unusual markup).
+        if not blocks:
+            raw = soup.get_text(" ", strip=True).replace("\xa0", " ")
+            blocks = [line.strip() for line in raw.splitlines() if line.strip()]
+
+        text_content = "\n\n".join(blocks)
         return ParsedDocumentItem(
             text_content=text_content,
             spine=spine,
@@ -85,7 +132,6 @@ class BookParser:
         for spine_index, (item_id, _) in enumerate(book.spine):
             item = book.get_item_with_id(item_id)
             if item.get_type() == ITEM_DOCUMENT:
-                # If no match, then inherit previous chapter name
                 if item.get_name() in nav_lookup:
                     current_chapter_name = nav_lookup[item.get_name()]
 

@@ -38,6 +38,7 @@ class BookChunker:
                         page_number=total_page,
                         chapter_number=chapter_number,
                         chapter_page_number=chapter_page_number,
+                        chapter_name=chapter.chapter_name or None,
                     )
                 )
                 chapter_page_number += 1

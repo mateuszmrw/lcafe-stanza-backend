@@ -1,0 +1,39 @@
+# Ignore everything by default, then whitelist what each build needs.
+# Both the backend and web Dockerfiles use this (monorepo root context).
+
+# Version control
+.git
+.gitignore
+
+# Local env files
+.env
+.env.local
+.env.*.local
+
+# Editor/OS
+.vscode
+.idea
+*.DS_Store
+
+# Backend: exclude frontend build artifacts
+apps/web/node_modules
+apps/web/.next
+apps/web/frontend-todo.md
+
+# Backend: exclude heavy model caches
+apps/backend/stanza-models
+apps/backend/stanza_resources
+apps/backend/storage
+
+# Backend: exclude test/dev artifacts
+apps/backend/.venv
+apps/backend/__pycache__
+apps/backend/.pytest_cache
+apps/backend/.mypy_cache
+apps/backend/.ruff_cache
+
+# Docs / plans
+docs
+plans
+dev
+*.md

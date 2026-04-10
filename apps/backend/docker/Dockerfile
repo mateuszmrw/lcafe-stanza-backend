@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 # Copy the application into the container.
 COPY . /app
@@ -7,5 +7,16 @@ COPY . /app
 WORKDIR /app
 RUN uv sync --frozen --no-cache
 
-# Run the application.
+# Create storage directories
+RUN mkdir -p /app/storage/books
+
+# Make entrypoint executable
+RUN chmod +x /app/docker/entrypoint.sh
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD /app/.venv/bin/python -c "import httpx; httpx.get('http://localhost:8678/health', timeout=5)" || exit 1
+
+# Run the application via entrypoint
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
 CMD ["/app/.venv/bin/fastapi", "run", "src/main.py", "--port", "8678", "--host", "0.0.0.0"]

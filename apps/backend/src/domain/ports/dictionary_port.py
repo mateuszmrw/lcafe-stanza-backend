@@ -1,0 +1,25 @@
+from abc import ABC, abstractmethod
+
+from pydantic import BaseModel
+
+
+class FrequencyInfo(BaseModel):
+    rank: int
+    tier: str  # "very_common" | "common" | "uncommon" | "rare"
+
+
+class DictionaryEntry(BaseModel):
+    lemma: str
+    pos: str
+    glosses: list[str]
+    forms: list[str]
+    etymology: str | None = None
+    labels: list[str] = []
+    frequency: FrequencyInfo | None = None
+
+
+class DictionaryPort(ABC):
+    @abstractmethod
+    async def lookup(
+        self, word: str, source_lang: str, target_lang: str
+    ) -> list[DictionaryEntry]: ...

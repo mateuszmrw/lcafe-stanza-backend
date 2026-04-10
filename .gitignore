@@ -62,3 +62,9 @@ apps/backend/cache/
 *.manifest
 *.spec
 pip-log.txt
+.claude
+.grepai/
+.memory
+dev
+docs
+plans

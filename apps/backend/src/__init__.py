@@ -1,3 +1,3 @@
 """
 Slovo Backend package.
-""" 
+"""
