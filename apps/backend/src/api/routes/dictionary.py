@@ -23,6 +23,7 @@ _TIER_THRESHOLDS = [
     (1_000, "very_common"),
     (5_000, "common"),
     (20_000, "uncommon"),
+    (65_000, "rare"),
 ]
 
 
@@ -30,7 +31,7 @@ def _rank_to_tier(rank: int) -> str:
     for threshold, tier in _TIER_THRESHOLDS:
         if rank <= threshold:
             return tier
-    return "rare"
+    return "very_rare"
 
 
 class DictionaryProviderResult(BaseModel):

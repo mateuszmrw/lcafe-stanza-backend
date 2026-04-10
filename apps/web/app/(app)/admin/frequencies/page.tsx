@@ -1,13 +1,53 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { useMutation } from "@tanstack/react-query"
-import { Loader2, Upload, Trash2 } from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Loader2, Upload, Trash2, BarChart2 } from "lucide-react"
 import {
   uploadFrequencies,
   deleteFrequencies,
+  listFrequencyStats,
   type FrequencyImportResult,
+  type FrequencyLanguageStat,
 } from "@/src/lib/api/admin"
+import { getLanguageLabel } from "@/src/lib/language-flags"
+
+function LanguageRow({ stat }: { stat: FrequencyLanguageStat }) {
+  const queryClient = useQueryClient()
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteFrequencies(stat.language_code),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["freq-stats"] })
+    },
+  })
+
+  return (
+    <tr className="border-b border-zinc-800">
+      <td className="py-3 px-4 text-sm">
+        <span className="font-mono text-zinc-300">{stat.language_code}</span>
+        <span className="ml-2 text-zinc-500">{getLanguageLabel(stat.language_code)}</span>
+      </td>
+      <td className="py-3 px-4 text-sm text-zinc-400">
+        {stat.entry_count.toLocaleString()} words
+      </td>
+      <td className="py-3 px-4">
+        <button
+          onClick={() => deleteMutation.mutate()}
+          disabled={deleteMutation.isPending}
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-red-400 hover:bg-zinc-800 transition disabled:opacity-50"
+        >
+          {deleteMutation.isPending ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Trash2 className="h-3 w-3" />
+          )}
+          Delete
+        </button>
+      </td>
+    </tr>
+  )
+}
 
 export default function AdminFrequenciesPage() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -15,6 +55,12 @@ export default function AdminFrequenciesPage() {
   const [replace, setReplace] = useState(true)
   const [uploadResult, setUploadResult] = useState<FrequencyImportResult | null>(null)
   const [uploadError, setUploadError] = useState("")
+  const queryClient = useQueryClient()
+
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ["freq-stats"],
+    queryFn: listFrequencyStats,
+  })
 
   const uploadMutation = useMutation({
     mutationFn: async () => {
@@ -26,25 +72,16 @@ export default function AdminFrequenciesPage() {
       setUploadResult(result)
       setUploadError("")
       if (fileRef.current) fileRef.current.value = ""
+      queryClient.invalidateQueries({ queryKey: ["freq-stats"] })
     },
     onError: (e: unknown) => {
       setUploadError(e instanceof Error ? e.message : "Upload failed")
     },
   })
 
-  const deleteMutation = useMutation({
-    mutationFn: () => deleteFrequencies(languageCode),
-    onSuccess: (result) => {
-      setUploadResult(result)
-      setUploadError("")
-    },
-    onError: (e: unknown) => {
-      setUploadError(e instanceof Error ? e.message : "Delete failed")
-    },
-  })
-
   return (
     <div className="space-y-8">
+      {/* Upload section */}
       <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
         <h2 className="mb-1 text-sm font-semibold text-zinc-300 uppercase tracking-wide">
           Upload Word Frequency List
@@ -52,8 +89,7 @@ export default function AdminFrequenciesPage() {
         <p className="mb-4 text-xs text-zinc-500">
           Upload a TSV or CSV frequency list for a language. Expected format (one entry per line):{" "}
           <code className="text-zinc-400">lemma&lt;TAB&gt;rank[&lt;TAB&gt;per_million]</code>.
-          Lines starting with <code className="text-zinc-400">#</code> are skipped.
-          A header row (<code className="text-zinc-400">lemma</code> in first column) is auto-detected and skipped.
+          Lines starting with <code className="text-zinc-400">#</code> and header rows are skipped.
           Compatible with OpenSubtitles2018 and OPUS frequency lists.
         </p>
 
@@ -92,33 +128,18 @@ export default function AdminFrequenciesPage() {
             </label>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => uploadMutation.mutate()}
-              disabled={uploadMutation.isPending || deleteMutation.isPending}
-              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
-            >
-              {uploadMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Upload className="h-4 w-4" />
-              )}
-              {uploadMutation.isPending ? "Uploading…" : "Upload"}
-            </button>
-
-            <button
-              onClick={() => deleteMutation.mutate()}
-              disabled={uploadMutation.isPending || deleteMutation.isPending || !languageCode}
-              className="flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-red-400 hover:bg-zinc-800 disabled:opacity-50"
-            >
-              {deleteMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              Delete all for language
-            </button>
-          </div>
+          <button
+            onClick={() => uploadMutation.mutate()}
+            disabled={uploadMutation.isPending}
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+          >
+            {uploadMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="h-4 w-4" />
+            )}
+            {uploadMutation.isPending ? "Uploading…" : "Upload"}
+          </button>
 
           {uploadResult && (
             <p className="text-sm text-green-400">
@@ -133,16 +154,50 @@ export default function AdminFrequenciesPage() {
         </div>
       </section>
 
+      {/* Loaded languages */}
+      <section>
+        <h2 className="mb-3 text-sm font-semibold text-zinc-300 uppercase tracking-wide">
+          Loaded Frequency Lists
+        </h2>
+        {statsLoading ? (
+          <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
+        ) : !stats?.length ? (
+          <div className="flex flex-col items-center gap-2 py-10 text-zinc-600">
+            <BarChart2 className="h-8 w-8" />
+            <p className="text-sm">No frequency data loaded yet.</p>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-zinc-900">
+                  <th className="py-3 px-4 text-left text-xs font-medium uppercase tracking-wide text-zinc-500">Language</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium uppercase tracking-wide text-zinc-500">Words</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium uppercase tracking-wide text-zinc-500">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-zinc-950">
+                {stats.map((s) => (
+                  <LanguageRow key={s.language_code} stat={s} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* Tier reference */}
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
-        <h2 className="mb-2 text-sm font-semibold text-zinc-300 uppercase tracking-wide">
-          About frequency tiers
+        <h2 className="mb-3 text-sm font-semibold text-zinc-300 uppercase tracking-wide">
+          Frequency tiers
         </h2>
         <div className="grid grid-cols-2 gap-2 text-xs">
           {[
             { tier: "Very common", range: "rank ≤ 1,000", color: "text-green-400" },
             { tier: "Common", range: "rank ≤ 5,000", color: "text-sky-400" },
             { tier: "Uncommon", range: "rank ≤ 20,000", color: "text-yellow-400" },
-            { tier: "Rare", range: "rank > 20,000", color: "text-zinc-500" },
+            { tier: "Rare", range: "rank ≤ 65,000", color: "text-zinc-400" },
+            { tier: "Very rare", range: "rank > 65,000", color: "text-zinc-600" },
           ].map(({ tier, range, color }) => (
             <div key={tier} className="flex items-center gap-2">
               <span className={`font-medium ${color}`}>{tier}</span>

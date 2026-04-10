@@ -23,6 +23,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "sqlalchemy>=2.0.46",
     "sse-starlette>=3.0.3",
+    "pypinyin>=0.53.0",
     "stanza==1.10.1",
     "uvicorn==0.27.1",
 ]

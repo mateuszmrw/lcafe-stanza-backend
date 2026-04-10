@@ -143,9 +143,9 @@ export async function deleteDictionaryPair(
   })
 }
 
-export interface FrequencyStats {
+export interface FrequencyLanguageStat {
   language_code: string
-  has_entries: boolean
+  entry_count: number
 }
 
 export interface FrequencyImportResult {
@@ -154,8 +154,8 @@ export interface FrequencyImportResult {
   deleted: number
 }
 
-export async function getFrequencyStats(languageCode: string): Promise<FrequencyStats> {
-  return apiClient<FrequencyStats>(`/admin/frequencies/stats/${languageCode}`)
+export async function listFrequencyStats(): Promise<FrequencyLanguageStat[]> {
+  return apiClient<FrequencyLanguageStat[]>("/admin/frequencies/stats")
 }
 
 export async function uploadFrequencies(

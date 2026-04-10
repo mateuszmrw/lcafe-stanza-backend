@@ -14,9 +14,9 @@ _freq_repo = WordFrequencyRepository()
 _BATCH_SIZE = 2000
 
 
-class FrequencyStats(BaseModel):
+class FrequencyLanguageStat(BaseModel):
     language_code: str
-    has_entries: bool
+    entry_count: int
 
 
 class ImportResult(BaseModel):
@@ -25,14 +25,14 @@ class ImportResult(BaseModel):
     deleted: int
 
 
-@router.get("/stats/{language_code}", response_model=FrequencyStats)
-async def get_frequency_stats(
-    language_code: str,
+@router.get("/stats", response_model=list[FrequencyLanguageStat])
+async def list_frequency_stats(
     _: User = Depends(require_admin),
     session: AsyncSession = Depends(get_db),
-) -> FrequencyStats:
-    has = await _freq_repo.has_entries(session, language_code.lower())
-    return FrequencyStats(language_code=language_code.lower(), has_entries=has)
+) -> list[FrequencyLanguageStat]:
+    """Return entry counts for every loaded frequency language."""
+    rows = await _freq_repo.list_all_stats(session)
+    return [FrequencyLanguageStat(language_code=lang, entry_count=cnt) for lang, cnt in rows]
 
 
 @router.post("/upload/{language_code}", response_model=ImportResult)

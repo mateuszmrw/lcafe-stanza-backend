@@ -10,10 +10,16 @@ import { WordToken } from "./WordToken"
 
 const MAX_SELECTION_CHARS = 500
 
+// Languages where tokens are not separated by spaces (Chinese, Japanese, etc.)
+function isNoSpaceLanguage(code: string): boolean {
+  return code.startsWith("zh") || code === "ja"
+}
+
 interface ParagraphsProps {
   tokens: TokenWithStatus[]
   activeToken: TokenWithStatus | null
   selectionRange: [number, number] | null
+  noWordSpacing: boolean
   onTokenClick: (token: TokenWithStatus) => void
   onTokenMouseDown: (tokenIndex: number) => void
   onTokenMouseEnter: (tokenIndex: number) => void
@@ -23,6 +29,7 @@ function Paragraphs({
   tokens,
   activeToken,
   selectionRange,
+  noWordSpacing,
   onTokenClick,
   onTokenMouseDown,
   onTokenMouseEnter,
@@ -47,9 +54,9 @@ function Paragraphs({
             // it's closing punctuation (comma, period, etc.), or the previous
             // token is opening punctuation (parenthesis, etc.).
             const prevW = paraTokens[i - 1]?.token.w ?? ""
-            const isClosingPunct = /^[.,!?;:)\]»…\-—–]/.test(token.w)
-            const prevIsOpeningPunct = /^[(\[«]$/.test(prevW)
-            const spaceBefore = i > 0 && !isClosingPunct && !prevIsOpeningPunct
+            const isClosingPunct = /^[.,!?;:)\]»…\-—–。，！？；：」』]/.test(token.w)
+            const prevIsOpeningPunct = /^[(\[«「『]$/.test(prevW)
+            const spaceBefore = !noWordSpacing && i > 0 && !isClosingPunct && !prevIsOpeningPunct
             return (
               <Fragment key={`${pi}-${token.si}-${i}`}>
                 {spaceBefore && " "}
@@ -75,10 +82,12 @@ interface ReadingPaneProps {
   bookId: string
   page: number
   totalPages: number
+  languageCode: string
   onPageChange: (page: number) => void
 }
 
-export function ReadingPane({ bookId, page, totalPages, onPageChange }: ReadingPaneProps) {
+export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChange }: ReadingPaneProps) {
+  const noWordSpacing = isNoSpaceLanguage(languageCode)
   const { activeToken, setActiveToken, setSelectedText } = useReaderStore()
 
   // Drag selection state — stored in refs to avoid re-renders during drag
@@ -134,9 +143,13 @@ export function ReadingPane({ bookId, page, totalPages, onPageChange }: ReadingP
 
     // Collect text from the selected token range
     const selectedTokens = currentPage.tokens.slice(lo, hi + 1)
-    const text = selectedTokens.map((t) => t.w).join(" ").trim()
+    const sep = noWordSpacing ? "" : " "
+    const text = selectedTokens.map((t) => t.w).join(sep).trim()
+    const wordCount = noWordSpacing
+      ? selectedTokens.filter((t) => t.pos !== "PUNCT").length
+      : text.split(/\s+/).filter(Boolean).length
 
-    if (text.split(/\s+/).filter(Boolean).length < 2) {
+    if (wordCount < 2) {
       setSelectionRange(null)
       return
     }
@@ -193,6 +206,7 @@ export function ReadingPane({ bookId, page, totalPages, onPageChange }: ReadingP
                 tokens={currentPage.tokens}
                 activeToken={activeToken}
                 selectionRange={selectionRange}
+                noWordSpacing={noWordSpacing}
                 onTokenClick={handleTokenClick}
                 onTokenMouseDown={handleTokenMouseDown}
                 onTokenMouseEnter={handleTokenMouseEnter}

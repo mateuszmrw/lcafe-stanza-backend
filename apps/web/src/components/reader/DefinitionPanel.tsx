@@ -68,6 +68,7 @@ const FREQ_TIER_CLASSES: Record<string, string> = {
   common:      "bg-sky-900/60 text-sky-300",
   uncommon:    "bg-yellow-900/60 text-yellow-300",
   rare:        "bg-zinc-700/60 text-zinc-400",
+  very_rare:   "bg-zinc-800/60 text-zinc-600",
 }
 
 const FREQ_TIER_LABELS: Record<string, string> = {
@@ -75,6 +76,7 @@ const FREQ_TIER_LABELS: Record<string, string> = {
   common:      "Common",
   uncommon:    "Uncommon",
   rare:        "Rare",
+  very_rare:   "Very rare",
 }
 
 function FrequencyBadge({ freq }: { freq: FrequencyInfo }) {

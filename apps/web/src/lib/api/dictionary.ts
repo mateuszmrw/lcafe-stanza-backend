@@ -2,7 +2,7 @@ import { apiClient } from "./client"
 
 export interface FrequencyInfo {
   rank: number
-  tier: "very_common" | "common" | "uncommon" | "rare"
+  tier: "very_common" | "common" | "uncommon" | "rare" | "very_rare"
 }
 
 export interface DictionaryEntry {

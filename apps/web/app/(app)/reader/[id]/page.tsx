@@ -146,6 +146,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
             bookId={id}
             page={page}
             totalPages={totalPages}
+            languageCode={language}
             onPageChange={setPage}
           />
         </div>

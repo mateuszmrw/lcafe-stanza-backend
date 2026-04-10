@@ -42,3 +42,17 @@ class WordFrequencyRepository:
             .where(WordFrequency.language_code == language_code)
         )
         return (count or 0) > 0
+
+    async def list_all_stats(
+        self, session: AsyncSession
+    ) -> list[tuple[str, int]]:
+        """Return (language_code, entry_count) for every loaded language."""
+        result = await session.execute(
+            sa.select(
+                WordFrequency.language_code,
+                sa.func.count().label("cnt"),
+            )
+            .group_by(WordFrequency.language_code)
+            .order_by(WordFrequency.language_code)
+        )
+        return [(row.language_code, row.cnt) for row in result.all()]

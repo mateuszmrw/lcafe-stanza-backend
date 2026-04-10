@@ -5,6 +5,13 @@ from typing import Any  # noqa: F401
 
 import stanza
 
+def _to_pinyin(text: str) -> str:
+    try:
+        from pypinyin import lazy_pinyin, Style
+        return " ".join(lazy_pinyin(text, style=Style.TONE))
+    except ImportError:
+        return ""
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +35,8 @@ class StanzaClient:
             "english": ModelConfig(use_gpu=config.use_gpu),
             "russian": ModelConfig(use_gpu=config.use_gpu),
             "polish": ModelConfig(use_gpu=config.use_gpu),
+            "ko": ModelConfig(use_gpu=config.use_gpu),
+            "zh-hans": ModelConfig(use_gpu=config.use_gpu),
         }
         self.installed_languages: list[str] = []
         self.loaded_languages: dict[str, Any] = {}
@@ -86,6 +95,8 @@ class StanzaClient:
         with lock:
             doc = pipeline(text)
 
+        is_chinese = lang == "zh-hans"
+
         tokens: list[dict] = []
         for si, sentence in enumerate(doc.sentences):
             for word in sentence.words:
@@ -94,10 +105,11 @@ class StanzaClient:
                     (f.split("=")[1] for f in feats.split("|") if f.startswith("Gender=")),
                     "",
                 )
+                reading = _to_pinyin(word.text) if is_chinese else ""
                 tokens.append(
                     {
                         "w": word.text,
-                        "r": "",
+                        "r": reading,
                         "l": word.lemma or "",
                         "lr": "",
                         "pos": word.upos or "",
