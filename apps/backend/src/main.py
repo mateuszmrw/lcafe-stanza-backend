@@ -28,6 +28,8 @@ from src.api.routes.admin import deepl_instances as admin_deepl_instances_router
 from src.api.routes.admin import llm as admin_llm_router
 from src.api.routes.admin import data as admin_data_router
 from src.api.routes.admin import frequencies as admin_frequencies_router
+from src.api.routes import phrases as phrases_router
+from src.api.routes import stats as stats_router
 from src.api.routes import setup as setup_router  # noqa: E402
 from src.core import get_settings
 
@@ -73,4 +75,6 @@ app.include_router(admin_deepl_instances_router.router)
 app.include_router(admin_llm_router.router)
 app.include_router(admin_data_router.router)
 app.include_router(admin_frequencies_router.router)
+app.include_router(phrases_router.router)
+app.include_router(stats_router.router)
 app.include_router(setup_router.router)

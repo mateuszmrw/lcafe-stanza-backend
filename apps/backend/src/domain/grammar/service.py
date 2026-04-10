@@ -44,21 +44,63 @@ Respond ONLY with a valid JSON object — no markdown, no extra keys:
 }"""
 
 
+_INTERESTING_FEATURES: dict[str, list[str]] = {
+    "ru": ["Case", "Aspect", "Animacy", "Voice", "Mood"],
+    "pl": ["Case", "Aspect", "Animacy", "Gender"],
+    "ko": ["Tense", "Mood", "Polite"],
+    "zh": ["Aspect"],
+    "zh-hans": ["Aspect"],
+}
+
+
+def _build_dep_summary(tokens: list[TokenInput]) -> str:
+    head_map = {i + 1: t for i, t in enumerate(tokens)}  # 1-based
+    lines: list[str] = []
+    for t in tokens:
+        if t.dep_rel == "ROOT":
+            lines.append(f'"{t.w}" is the main verb (ROOT)')
+        elif t.dep_head and t.dep_rel:
+            head = head_map.get(t.dep_head)
+            if head:
+                lines.append(f'"{t.w}" → {t.dep_rel} of "{head.w}"')
+    return "\n".join(lines) if lines else "—"
+
+
+def _select_focus_features(tokens: list[TokenInput], language_code: str) -> list[str]:
+    candidates = _INTERESTING_FEATURES.get(language_code, ["Case", "Tense"])
+    found: list[str] = []
+    for feat in candidates:
+        if any(feat in (t.feats or "") for t in tokens):
+            found.append(feat)
+        if len(found) == 2:
+            break
+    return found or candidates[:2]
+
+
 def _build_user_prompt(
     tokens: list[TokenInput],
     language_code: str,
     proficiency_level: str,
     native_language_code: str,
+    register: str | None = None,
 ) -> str:
-    rows = "\n".join(
-        f"  {t.w!r:20s} | lemma={t.l!r:20s} | pos={t.pos:10s} | feats={t.feats or '-':30s} | head={t.dep_head:2d} | rel={t.dep_rel or '-'}"
+    morph_rows = "\n".join(
+        f"  {t.w!r:20s} | lemma={t.l!r:20s} | pos={t.pos:10s} | feats={t.feats or '—':35s} | head={t.dep_head:2d} | rel={t.dep_rel or '—'}"
         for t in tokens
     )
+    dep_summary = _build_dep_summary(tokens)
+    focus = ", ".join(_select_focus_features(tokens, language_code)) or "general structure"
+    register_line = f"Document register: {register}" if register else "Document register: unspecified"
+
     return (
         f"Sentence language: {language_code}\n"
         f"Learner proficiency: {proficiency_level}\n"
-        f"Learner native language: {native_language_code}\n\n"
-        f"Token table:\n{rows}\n\n"
+        f"Learner native language: {native_language_code}\n"
+        f"{register_line}\n\n"
+        f"MORPHOLOGICAL ANALYSIS:\n{morph_rows}\n\n"
+        f"DEPENDENCY STRUCTURE:\n{dep_summary}\n\n"
+        f"FOCUS ON: {focus}\n\n"
+        f"Do not contradict the Stanza analysis above.\n"
         f"Write the entire JSON response (annotations and prose_explanation) in {native_language_code}."
     )
 
@@ -73,9 +115,10 @@ class GrammarExplanationService:
         language_code: str,
         proficiency_level: str,
         native_language_code: str,
+        register: str | None = None,
     ) -> GrammarExplainResponse:
         user_prompt = _build_user_prompt(
-            tokens, language_code, proficiency_level, native_language_code
+            tokens, language_code, proficiency_level, native_language_code, register
         )
         raw = await self._llm.complete(_SYSTEM_PROMPT, user_prompt)
 

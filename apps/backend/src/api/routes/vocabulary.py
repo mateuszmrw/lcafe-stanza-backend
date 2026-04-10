@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_current_user, get_db
-from src.api.schemas.vocabulary import VocabularyStatusUpdate, VocabularyUpsertRequest, WordListResponse, WordResponse
+from src.api.schemas.vocabulary import BulkStatusUpdate, VocabularyStatusUpdate, VocabularyUpsertRequest, WordListResponse, WordResponse
 from src.infrastructure.db.models.users import User
 from src.infrastructure.db.repositories.word_repo import WordRepository
 
@@ -16,6 +16,7 @@ _word_repo = WordRepository()
 async def list_vocabulary(
     language_id: int,
     status: str | None = None,
+    pos: str | None = None,
     page: int = 1,
     limit: int = 50,
     current_user: User = Depends(get_current_user),
@@ -26,6 +27,7 @@ async def list_vocabulary(
         user_id=current_user.id,
         language_id=language_id,
         status=status,
+        pos=pos,
         page=page,
         limit=limit,
     )
@@ -82,6 +84,17 @@ async def batch_upsert_word_status(
         for item in body
     ]
     await _word_repo.batch_upsert_status(session, rows)
+    await session.commit()
+
+
+@router.patch("/bulk", status_code=204)
+async def bulk_update_status(
+    body: BulkStatusUpdate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    """Bulk-update status for multiple words owned by the current user."""
+    await _word_repo.bulk_update_status(session, current_user.id, body.ids, body.status)
     await session.commit()
 
 

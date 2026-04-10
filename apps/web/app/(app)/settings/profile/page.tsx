@@ -44,6 +44,7 @@ export default function ProfilePage() {
   const [error, setError] = useState("")
   const [proficiencyLevel, setProficiencyLevel] = useState("")
   const [nativeLanguage, setNativeLanguage] = useState("")
+  const [autoIgnorePropn, setAutoIgnorePropn] = useState(false)
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ["profile"],
@@ -55,6 +56,7 @@ export default function ProfilePage() {
       setUsernameValue(profile.username)
       setProficiencyLevel(profile.proficiency_level ?? "")
       setNativeLanguage(profile.native_language_code ?? "")
+      setAutoIgnorePropn(profile.auto_ignore_proper_nouns ?? false)
     }
   }, [profile])
 
@@ -91,6 +93,7 @@ export default function ProfilePage() {
       await proficiencyMutation.mutateAsync({
         proficiency_level: proficiencyLevel || undefined,
         native_language_code: nativeLanguage || undefined,
+        auto_ignore_proper_nouns: autoIgnorePropn,
       })
       setSaved("proficiency")
       setTimeout(() => setSaved(null), 2000)
@@ -197,6 +200,18 @@ export default function ProfilePage() {
               ))}
             </select>
           </div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoIgnorePropn}
+              onChange={(e) => setAutoIgnorePropn(e.target.checked)}
+              className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 accent-blue-500"
+            />
+            <span className="text-sm text-zinc-300">
+              Automatically ignore proper nouns
+              <span className="ml-1 text-zinc-500">(names, places — won&apos;t show as new words)</span>
+            </span>
+          </label>
           <button
             onClick={handleSaveProficiency}
             disabled={proficiencyMutation.isPending}

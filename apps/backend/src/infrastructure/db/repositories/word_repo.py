@@ -72,6 +72,7 @@ class WordRepository:
         user_id: uuid.UUID,
         language_id: int,
         status: str | None = None,
+        pos: str | None = None,
         page: int = 1,
         limit: int = 50,
     ) -> tuple[list[Word], int]:
@@ -82,6 +83,8 @@ class WordRepository:
         )
         if status:
             query = query.where(Word.status == status)
+        if pos:
+            query = query.where(Word.pos == pos)
 
         total_result = await session.execute(
             sa.select(sa.func.count()).select_from(query.subquery())
@@ -90,6 +93,23 @@ class WordRepository:
 
         result = await session.execute(query.offset((page - 1) * limit).limit(limit))
         return list(result.scalars().all()), total
+
+    async def bulk_update_status(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        ids: list[uuid.UUID],
+        status: str,
+    ) -> int:
+        """Update status for multiple words owned by the user. Returns affected count."""
+        if not ids:
+            return 0
+        result = await session.execute(
+            sa.update(Word)
+            .where(Word.user_id == user_id, Word.id.in_(ids))
+            .values(status=status)
+        )
+        return result.rowcount  # type: ignore[return-value]
 
     async def find_by_id(
         self, session: AsyncSession, word_id: uuid.UUID

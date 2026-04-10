@@ -18,6 +18,7 @@ class TokenAnnotation(BaseModel):
 class GrammarExplainRequest(BaseModel):
     tokens: list[TokenInput]
     language_code: str
+    register: str | None = None
 
 
 class GrammarExplainResponse(BaseModel):

@@ -28,6 +28,9 @@ class User(Base):
     )
     proficiency_level: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     native_language_code: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    auto_ignore_proper_nouns: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
     refresh_token_hash: Mapped[Optional[str]] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")

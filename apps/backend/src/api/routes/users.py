@@ -42,6 +42,7 @@ async def _build_user_response(user: User, session: AsyncSession) -> UserRespons
         active_language_name=lang.name if lang else None,
         proficiency_level=user.proficiency_level,
         native_language_code=user.native_language_code,
+        auto_ignore_proper_nouns=user.auto_ignore_proper_nouns,
     )
 
 
@@ -103,6 +104,8 @@ async def set_proficiency(
         current_user.proficiency_level = body.proficiency_level
     if body.native_language_code is not None:
         current_user.native_language_code = body.native_language_code
+    if body.auto_ignore_proper_nouns is not None:
+        current_user.auto_ignore_proper_nouns = body.auto_ignore_proper_nouns
     await session.commit()
     return await _build_user_response(current_user, session)
 

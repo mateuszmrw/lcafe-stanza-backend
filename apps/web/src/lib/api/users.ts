@@ -23,6 +23,7 @@ export interface UserProfile {
   active_language_name: string | null
   proficiency_level: string | null
   native_language_code: string | null
+  auto_ignore_proper_nouns: boolean
 }
 
 export interface ApiKeyStatus {
@@ -71,6 +72,7 @@ export async function updateActiveLanguage(languageId: number): Promise<UserProf
 export async function updateProficiency(data: {
   proficiency_level?: string
   native_language_code?: string
+  auto_ignore_proper_nouns?: boolean
 }): Promise<UserProfile> {
   return apiClient<UserProfile>("/users/me/proficiency", {
     method: "PATCH",

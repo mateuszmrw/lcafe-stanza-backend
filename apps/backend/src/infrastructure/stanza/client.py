@@ -63,10 +63,18 @@ class StanzaClient:
     def list_installed_languages(self) -> list[str]:
         return [lang.capitalize() for lang in self.model_configs]
 
+    # These are always pre-loaded regardless of the `languages` env var.
+    DEFAULT_LANGUAGES: list[str] = ["english", "russian", "polish", "ko", "zh-hans"]
+
     def download_languages(self):
+        # Merge defaults with any extra languages from config (deduped, order preserved).
+        to_load = list(self.DEFAULT_LANGUAGES)
         for lang in self.config.languages:
+            if lang not in to_load:
+                to_load.append(lang)
+        for lang in to_load:
             self.install_language(lang)
-        logger.info(f"Downloaded languages: {self.config.languages}")
+        logger.info(f"Downloaded languages: {to_load}")
 
     def install_language(self, language: str) -> None:
         if language not in self.model_configs:

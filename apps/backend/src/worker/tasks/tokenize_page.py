@@ -9,6 +9,7 @@ from src.infrastructure.db.engine import AsyncSessionFactory
 from src.infrastructure.db.models.content import ContentItem, ContentPage
 from src.infrastructure.db.models.languages import LanguageNlpConfig
 from src.infrastructure.db.models.providers import Provider
+from src.infrastructure.db.models.users import User
 from src.infrastructure.db.repositories.word_repo import WordRepository
 from src.infrastructure.stanza.client import StanzaClient
 from src.worker.events import publish_import_event
@@ -58,6 +59,10 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
 
         stanza_lang: str = nlp_config.config.get("stanza_language_name", "english")
 
+        # Load user settings for vocabulary insertion behaviour.
+        user = await session.get(User, content_item.user_id)
+        auto_ignore_propn: bool = getattr(user, "auto_ignore_proper_nouns", False) if user else False
+
         # Tokenize in a background thread — Stanza is CPU-bound and not async-friendly.
         token_dicts: list[dict] = await asyncio.to_thread(
             stanza_client.tokenize_sync, stanza_lang, page.text
@@ -72,20 +77,21 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
             key = t["w"].lower().strip()
             if key and key not in seen:
                 seen.add(key)
-                word_rows.append(
-                    {
-                        "user_id": content_item.user_id,
-                        "language_id": content_item.language_id,
-                        "word": key,
-                        "lemma": t.get("l", ""),
-                        "pos": t.get("pos", ""),
-                        "reading": t.get("r", ""),
-                        "gender": t.get("g", ""),
-                        "feats": t.get("feats", ""),
-                        "dep_head": t.get("dep_head", 0),
-                        "dep_rel": t.get("dep_rel", ""),
-                    }
-                )
+                row: dict = {
+                    "user_id": content_item.user_id,
+                    "language_id": content_item.language_id,
+                    "word": key,
+                    "lemma": t.get("l", ""),
+                    "pos": t.get("pos", ""),
+                    "reading": t.get("r", ""),
+                    "gender": t.get("g", ""),
+                    "feats": t.get("feats", ""),
+                    "dep_head": t.get("dep_head", 0),
+                    "dep_rel": t.get("dep_rel", ""),
+                }
+                if auto_ignore_propn and t.get("pos") == "PROPN":
+                    row["status"] = "ignored"
+                word_rows.append(row)
 
         await _word_repo.bulk_upsert(
             session,

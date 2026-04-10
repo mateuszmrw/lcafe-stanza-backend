@@ -66,6 +66,7 @@ async def upload_frequencies(
 
     inserted = 0
     batch: list[dict] = []
+    auto_rank = 0
 
     for line in lines:
         line = line.strip()
@@ -74,22 +75,23 @@ async def upload_frequencies(
         parts = line.split("\t")
         if len(parts) < 2:
             parts = line.split(",")
-        if len(parts) < 2:
+        if not parts:
             continue
 
         lemma = parts[0].strip().lower()
-        if not lemma or lemma == "lemma":  # skip header row
+        if not lemma or lemma in ("lemma", "word"):  # skip header row
             continue
 
-        try:
-            rank = int(parts[1].strip())
-        except ValueError:
-            continue
+        # The file is sorted most-common-first; use row position as rank.
+        # Column 2 (if present) may be a raw count or a sequential rank —
+        # we store it as per_million for reference but always derive rank
+        # from insertion order so tiers stay meaningful.
+        auto_rank += 1
 
         per_million: float | None = None
-        if len(parts) >= 3:
+        if len(parts) >= 2:
             try:
-                per_million = float(parts[2].strip())
+                per_million = float(parts[1].strip())
             except ValueError:
                 pass
 
@@ -97,7 +99,7 @@ async def upload_frequencies(
             "id": uuid.uuid4(),
             "language_code": lang,
             "lemma": lemma,
-            "rank": rank,
+            "rank": auto_rank,
             "per_million": per_million,
         })
 

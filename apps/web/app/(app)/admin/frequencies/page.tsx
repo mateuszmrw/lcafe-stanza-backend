@@ -87,10 +87,22 @@ export default function AdminFrequenciesPage() {
           Upload Word Frequency List
         </h2>
         <p className="mb-4 text-xs text-zinc-500">
-          Upload a TSV or CSV frequency list for a language. Expected format (one entry per line):{" "}
-          <code className="text-zinc-400">lemma&lt;TAB&gt;rank[&lt;TAB&gt;per_million]</code>.
+          Upload a TSV or CSV frequency list for a language sorted most-common first. Expected
+          format (one entry per line):{" "}
+          <code className="text-zinc-400">lemma&lt;TAB&gt;count</code> or{" "}
+          <code className="text-zinc-400">lemma&lt;TAB&gt;rank</code>.
+          Rank is assigned automatically by row position (row 1 = most common).
           Lines starting with <code className="text-zinc-400">#</code> and header rows are skipped.
-          Compatible with OpenSubtitles2018 and OPUS frequency lists.
+          Compatible with{" "}
+          <a
+            href="https://github.com/orgtre/top-open-subtitles-sentences"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-400 hover:underline"
+          >
+            orgtre/top-open-subtitles-sentences
+          </a>{" "}
+          and OPUS frequency lists.
         </p>
 
         <div className="space-y-4">

@@ -24,11 +24,20 @@ export async function listVocabulary(
   languageId: number,
   status?: string,
   page = 1,
-  limit = 50
+  limit = 50,
+  pos?: string
 ): Promise<WordListResponse> {
   const params = new URLSearchParams({ language_id: String(languageId), page: String(page), limit: String(limit) })
   if (status) params.set("status", status)
+  if (pos) params.set("pos", pos)
   return apiClient(`/vocabulary?${params}`)
+}
+
+export async function bulkUpdateStatus(ids: string[], status: string): Promise<void> {
+  await apiClient<void>("/vocabulary/bulk", {
+    method: "PATCH",
+    body: JSON.stringify({ ids, status }),
+  })
 }
 
 export async function updateWordStatus(

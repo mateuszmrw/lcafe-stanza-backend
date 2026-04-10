@@ -108,6 +108,7 @@ async def explain_grammar(
             language_code=body.language_code,
             proficiency_level=current_user.proficiency_level,
             native_language_code=current_user.native_language_code or "en",
+            register=body.register,
         )
     except ValueError as exc:
         log.error("Grammar explanation failed: %s", exc)

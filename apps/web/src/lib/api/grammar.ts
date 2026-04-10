@@ -21,10 +21,11 @@ export interface GrammarExplainResponse {
 
 export async function explainGrammar(
   tokens: GrammarTokenInput[],
-  languageCode: string
+  languageCode: string,
+  register?: string | null
 ): Promise<GrammarExplainResponse> {
   return apiClient<GrammarExplainResponse>("/grammar/explain", {
     method: "POST",
-    body: JSON.stringify({ tokens, language_code: languageCode }),
+    body: JSON.stringify({ tokens, language_code: languageCode, register: register ?? null }),
   })
 }

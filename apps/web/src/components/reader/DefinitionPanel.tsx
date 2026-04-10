@@ -1,13 +1,14 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { X, Loader2, AlertTriangle, ArrowLeft, BrainCircuit } from "lucide-react"
 import type { PageListResponse, TokenWithStatus } from "@/src/lib/api/books"
 import { upsertWordStatus } from "@/src/lib/api/vocabulary"
 import { translate, getTranslationAvailable } from "@/src/lib/api/translation"
 import { lookup, type FrequencyInfo } from "@/src/lib/api/dictionary"
 import { explainGrammar, type GrammarExplainResponse } from "@/src/lib/api/grammar"
+import { createPhrase } from "@/src/lib/api/phrases"
 import { useReaderStore } from "@/src/stores/reader"
 import { getLanguageLabel } from "@/src/lib/language-flags"
 import { cn } from "@/src/lib/cn"
@@ -103,9 +104,11 @@ interface DefinitionPanelProps {
   language: string
   languageId: number
   languageCode: string
+  bookId?: string
+  currentPage?: number
 }
 
-export function DefinitionPanel({ token, language, languageId, languageCode }: DefinitionPanelProps) {
+export function DefinitionPanel({ token, language, languageId, languageCode, bookId, currentPage }: DefinitionPanelProps) {
   const { clearActive, setActiveToken, setSelectedText, activeToken, selectedText, selectedTokens } = useReaderStore()
   const queryClient = useQueryClient()
 
@@ -118,6 +121,23 @@ export function DefinitionPanel({ token, language, languageId, languageCode }: D
         .filter((t) => t.pos !== "PUNCT")
         .map((t) => ({ w: t.w, l: t.l, pos: t.pos, feats: t.f ?? "", dep_head: t.dep_head ?? 0, dep_rel: t.dep_rel ?? "" }))
       return explainGrammar(tokens, languageCode)
+    },
+  })
+
+  const [phraseSaved, setPhraseSaved] = useState(false)
+  const savePhraseMutation = useMutation({
+    mutationFn: () =>
+      createPhrase({
+        language_id: languageId,
+        text: selectedText ?? "",
+        translation: translationData?.results[0]?.translated_texts[0] ?? null,
+        context: selectedText,
+        book_id: bookId ?? null,
+        page: currentPage ?? null,
+      }),
+    onSuccess: () => {
+      setPhraseSaved(true)
+      setTimeout(() => setPhraseSaved(false), 2000)
     },
   })
 
@@ -335,6 +355,22 @@ export function DefinitionPanel({ token, language, languageId, languageCode }: D
                     </button>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Save phrase */}
+            {!isOverLimit && (
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  Phrase
+                </p>
+                <button
+                  onClick={() => savePhraseMutation.mutate()}
+                  disabled={savePhraseMutation.isPending || phraseSaved}
+                  className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 transition disabled:opacity-50"
+                >
+                  {phraseSaved ? "Saved!" : savePhraseMutation.isPending ? "Saving…" : "Save phrase"}
+                </button>
               </div>
             )}
 

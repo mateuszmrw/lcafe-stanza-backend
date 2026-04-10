@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     project_name: str = "Slovo Backend"
     debug: bool = False
-    languages: list[str] = ["russian", "polish"]
+    languages: list[str] = []  # extra Stanza models to pre-load beyond the 5 defaults
     use_gpu: bool = False
     model_dir: str = "stanza_resources"
     jwt_secret: str

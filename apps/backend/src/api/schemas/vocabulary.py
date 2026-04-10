@@ -41,3 +41,8 @@ class VocabularyUpsertRequest(BaseModel):
     reading: str = ""
     gender: str = ""
     feats: str = ""
+
+
+class BulkStatusUpdate(BaseModel):
+    ids: list[uuid.UUID]
+    status: str
