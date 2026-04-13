@@ -29,6 +29,7 @@ from src.core.config import get_settings
 from src.domain.content.service import ContentService
 from src.domain.nlp.services.book_chunker import BookChunker
 from src.domain.nlp.services.book_parser import BookParser
+from src.domain.nlp.services.pdf_parser import PdfParser
 from src.infrastructure.db.models.content import Book, ContentPage
 from src.infrastructure.db.models.languages import Language
 from src.infrastructure.db.models.users import User
@@ -65,20 +66,28 @@ async def upload_book(
 
     content = await file.read()
 
-    # Validate EPUB structure before touching disk (case-insensitive — some EPUBs
-    # produced on macOS use lower-case "meta-inf/container.xml").
-    try:
-        with zipfile.ZipFile(io.BytesIO(content)) as zf:
-            names_lower = {n.lower() for n in zf.namelist()}
-            if "meta-inf/container.xml" not in names_lower:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Uploaded file is missing META-INF/container.xml — not a valid EPUB",
-                )
-    except HTTPException:
-        raise
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="Uploaded file is not a valid ZIP/EPUB archive")
+    # Detect format by magic bytes.
+    _PDF_MAGIC = b"%PDF"
+    is_pdf = content[:4] == _PDF_MAGIC
+
+    if is_pdf:
+        file_extension = "pdf"
+    else:
+        # Validate EPUB structure (case-insensitive — some EPUBs produced on macOS
+        # use lower-case "meta-inf/container.xml").
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                names_lower = {n.lower() for n in zf.namelist()}
+                if "meta-inf/container.xml" not in names_lower:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Uploaded file is not a valid PDF or EPUB",
+                    )
+        except HTTPException:
+            raise
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=400, detail="Uploaded file is not a valid PDF or EPUB")
+        file_extension = "epub"
 
     file_hash = hashlib.sha256(content).hexdigest()
 
@@ -95,20 +104,24 @@ async def upload_book(
     books_dir = os.path.join(settings.storage_root, "books")
     os.makedirs(books_dir, exist_ok=True)
 
-    filename = f"{uuid.uuid4()}.epub"
+    filename = f"{uuid.uuid4()}.{file_extension}"
     rel_path = os.path.join("books", filename)
     abs_path = os.path.join(settings.storage_root, rel_path)
 
     with open(abs_path, "wb") as f:
         f.write(content)
 
-    # Parse + chunk the EPUB at upload time (fast, ~1s).
-    # Workers only receive tokenization jobs — no parsing overhead per worker.
+    # Parse + chunk at upload time (fast). Workers only handle tokenization.
     try:
-        chunks = BookChunker(BookParser(abs_path, "spine").parse()).chunk()
+        if is_pdf:
+            parsed = PdfParser(abs_path).parse()
+        else:
+            parsed = BookParser(abs_path, "spine").parse()
+        chunks = BookChunker(parsed).chunk()
     except Exception as exc:
         os.remove(abs_path)
-        raise HTTPException(status_code=400, detail=f"Could not parse EPUB: {exc}")
+        fmt = "PDF" if is_pdf else "EPUB"
+        raise HTTPException(status_code=400, detail=f"Could not parse {fmt}: {exc}")
 
     content_item = await _content_service.create_book_import(
         session,
