@@ -31,6 +31,7 @@ class ContentService:
         file_hash: str,
         file_path: str,
         description: str | None = None,
+        register: str | None = None,
     ) -> ContentItem:
         content_item = ContentItem(
             user_id=user_id,
@@ -38,6 +39,7 @@ class ContentService:
             type="book",
             title=title,
             description=description,
+            register=register,
             status="pending",
         )
         session.add(content_item)

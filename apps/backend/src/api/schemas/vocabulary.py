@@ -14,6 +14,7 @@ class WordResponse(BaseModel):
     gender: str
     status: str
     hint: Optional[str]
+    sentence_context: Optional[str] = None
     language_id: int
     lookup_count: int
     created_at: datetime
@@ -41,6 +42,8 @@ class VocabularyUpsertRequest(BaseModel):
     reading: str = ""
     gender: str = ""
     feats: str = ""
+    hint: Optional[str] = None
+    sentence_context: Optional[str] = None
 
 
 class BulkStatusUpdate(BaseModel):

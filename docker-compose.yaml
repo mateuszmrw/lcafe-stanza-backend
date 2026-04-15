@@ -3,6 +3,8 @@ services:
     image: postgres:15-alpine
     container_name: postgresql-stanza
     restart: unless-stopped
+    networks:
+      - slovo-local
     ports:
       - "5432:5432"
     environment:
@@ -26,6 +28,8 @@ services:
     image: redis:7-alpine
     container_name: redis-slovo
     restart: unless-stopped
+    networks:
+      - slovo-local
     volumes:
       - redis_data:/data
     healthcheck:
@@ -40,11 +44,13 @@ services:
       dockerfile: docker/Dockerfile
     container_name: slovo-backend
     restart: unless-stopped
+    networks:
+      - traefik
+      - slovo-local
     ports:
       - "8678:8678"
     environment:
       debug: "true"
-      languages: '["english", "russian", "polish"]'
       use_gpu: "false"
       db_host: postgresql
       db_port: "5432"
@@ -65,6 +71,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.slovo-backend.rule=Host(`sl-backend.mrw.ovh`)"
+      - "traefik.http.routers.slovo-backend.entrypoints=websecure"
+      - "traefik.http.routers.slovo-backend.tls.certresolver=ovh"
+      - "traefik.http.services.slovo-backend.loadbalancer.server.port=8678"
 
   arq-worker:
     build:
@@ -89,6 +101,8 @@ services:
     volumes:
       - stanza_models:/app/stanza_resources
       - storage:/app/storage
+    networks:
+      - slovo-local
     depends_on:
       postgresql:
         condition: service_healthy
@@ -106,11 +120,19 @@ services:
         # can reach. port 8678 is published on the host, so localhost works.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8678}
     container_name: slovo-web
+    networks:
+      - traefik
+      - slovo-local
     restart: unless-stopped
     ports:
       - "4412:3000"
     depends_on:
       - backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.slovo-web.rule=Host(`slovo.mrw.ovh`)"
+      - "traefik.http.routers.slovo-web.entrypoints=websecure"
+      - "traefik.http.routers.slovo-web.tls.certresolver=ovh"
 
 volumes:
   postgres_data:
@@ -121,3 +143,9 @@ volumes:
     driver: local
   storage:
     driver: local
+
+networks:
+  traefik:
+    external: true
+  slovo-local:
+    internal: true

@@ -15,7 +15,7 @@ from src.api.schemas.users import ActiveLanguageRequest, ApiKeyResponse, ApiKeyU
 from src.domain.users.models import UserUpdate
 from src.domain.users.service import UserService
 from src.infrastructure.db.models.languages import Language
-from src.infrastructure.db.models.users import User
+from src.infrastructure.db.models.users import User, UserLanguageProfile
 from src.infrastructure.db.repositories.api_key_repo import ApiKeyRepository
 from src.infrastructure.db.repositories.provider_repo import ProviderRepository
 
@@ -28,8 +28,17 @@ _api_key_repo = ApiKeyRepository()
 async def _build_user_response(user: User, session: AsyncSession) -> UserResponse:
     """Populate UserResponse including active language fields."""
     lang = None
+    profile = None
     if user.active_language_id is not None:
         lang = await session.get(Language, user.active_language_id)
+        result = await session.execute(
+            sa.select(UserLanguageProfile).where(
+                UserLanguageProfile.user_id == user.id,
+                UserLanguageProfile.language_id == user.active_language_id,
+            )
+        )
+        profile = result.scalar_one_or_none()
+
     return UserResponse(
         id=user.id,
         email=user.email,
@@ -40,9 +49,18 @@ async def _build_user_response(user: User, session: AsyncSession) -> UserRespons
         active_language_id=user.active_language_id,
         active_language_code=lang.code if lang else None,
         active_language_name=lang.name if lang else None,
-        proficiency_level=user.proficiency_level,
-        native_language_code=user.native_language_code,
-        auto_ignore_proper_nouns=user.auto_ignore_proper_nouns,
+        proficiency_level=profile.proficiency_level if profile else None,
+        # Per-language values; fall back to global user values when not set
+        native_language_code=(
+            profile.native_language_code
+            if profile and profile.native_language_code is not None
+            else user.native_language_code
+        ),
+        auto_ignore_proper_nouns=(
+            profile.auto_ignore_proper_nouns
+            if profile and profile.auto_ignore_proper_nouns is not None
+            else user.auto_ignore_proper_nouns
+        ),
     )
 
 
@@ -100,12 +118,35 @@ async def set_proficiency(
 ) -> UserResponse:
     if body.proficiency_level is not None and body.proficiency_level not in VALID_PROFICIENCY_LEVELS:
         raise HTTPException(status_code=422, detail=f"proficiency_level must be one of {sorted(VALID_PROFICIENCY_LEVELS)}")
+    if current_user.active_language_id is None:
+        raise HTTPException(status_code=422, detail="Set an active language before updating learning profile.")
+
+    # Build the upsert values for this language profile
+    upsert_values: dict = {
+        "user_id": current_user.id,
+        "language_id": current_user.active_language_id,
+    }
+    update_set: dict = {}
+
     if body.proficiency_level is not None:
-        current_user.proficiency_level = body.proficiency_level
+        upsert_values["proficiency_level"] = body.proficiency_level
+        update_set["proficiency_level"] = body.proficiency_level
     if body.native_language_code is not None:
-        current_user.native_language_code = body.native_language_code
+        upsert_values["native_language_code"] = body.native_language_code
+        update_set["native_language_code"] = body.native_language_code
     if body.auto_ignore_proper_nouns is not None:
-        current_user.auto_ignore_proper_nouns = body.auto_ignore_proper_nouns
+        upsert_values["auto_ignore_proper_nouns"] = body.auto_ignore_proper_nouns
+        update_set["auto_ignore_proper_nouns"] = body.auto_ignore_proper_nouns
+
+    if update_set:
+        await session.execute(
+            sa.dialects.postgresql.insert(UserLanguageProfile)
+            .values(**upsert_values)
+            .on_conflict_do_update(
+                index_elements=["user_id", "language_id"],
+                set_=update_set,
+            )
+        )
     await session.commit()
     return await _build_user_response(current_user, session)
 
@@ -171,13 +212,12 @@ async def reset_my_data(
         )
 
     # Collect file paths before deletion so we can clean up disk afterwards.
-    # file_path lives on Book, not ContentItem.
     result = await session.execute(
-        sa.select(Book.file_path)
+        sa.select(Book.file_path, Book.audio_file_path)
         .join(ContentItem, Book.content_item_id == ContentItem.id)
         .where(ContentItem.user_id == current_user.id)
     )
-    file_paths = [row[0] for row in result if row[0]]
+    file_paths = [p for row in result for p in row if p]
 
     words_result = await session.execute(
         sa.delete(Word).where(Word.user_id == current_user.id)

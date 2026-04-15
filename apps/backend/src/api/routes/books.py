@@ -9,12 +9,16 @@ from typing import AsyncGenerator
 
 from arq import ArqRedis
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+from fastapi import Query, Request
 from src.api.dependencies import get_arq_pool, get_current_user, get_db, get_redis
+from src.domain.auth.services.jwt import decode_token
+from src.api.schemas.audio import AudioStatusResponse, SentenceAlignmentResponse, TtsStatusResponse
 from src.api.schemas.books import (
     BookDetailResponse,
     BookListItem,
@@ -33,6 +37,7 @@ from src.domain.nlp.services.pdf_parser import PdfParser
 from src.infrastructure.db.models.content import Book, ContentPage
 from src.infrastructure.db.models.languages import Language
 from src.infrastructure.db.models.users import User
+from src.infrastructure.db.repositories.audio_repo import AudioRepository
 from src.infrastructure.db.repositories.content_page_repo import ContentPageRepository
 from src.infrastructure.db.repositories.word_repo import WordRepository
 
@@ -46,6 +51,7 @@ router = APIRouter(prefix="/books", tags=["books"])
 _content_service = ContentService()
 _page_repo = ContentPageRepository()
 _word_repo = WordRepository()
+_audio_repo = AudioRepository()
 
 
 @router.post("", response_model=BookUploadResponse, status_code=201)
@@ -53,6 +59,7 @@ async def upload_book(
     language_id: int = Form(...),
     title: str = Form(...),
     description: str | None = Form(None),
+    register: str | None = Form(None),
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
@@ -112,11 +119,14 @@ async def upload_book(
         f.write(content)
 
     # Parse + chunk at upload time (fast). Workers only handle tokenization.
+    has_smil = False
     try:
         if is_pdf:
             parsed = PdfParser(abs_path).parse()
         else:
-            parsed = BookParser(abs_path, "spine").parse()
+            book_parser = BookParser(abs_path, "spine")
+            parsed = book_parser.parse()
+            has_smil = book_parser.detect_smil_overlays()
         chunks = BookChunker(parsed).chunk()
     except Exception as exc:
         os.remove(abs_path)
@@ -131,6 +141,7 @@ async def upload_book(
         file_hash=file_hash,
         file_path=rel_path,
         description=description,
+        register=register,
     )
 
     pages = [
@@ -140,17 +151,21 @@ async def upload_book(
             chapter_number=chunk.chapter_number,
             chapter_name=chunk.chapter_name,
             chapter_page_number=chunk.chapter_page_number,
+            xhtml_file=chunk.xhtml_file,
             text=chunk.text,
         )
         for chunk in chunks
     ]
     session.add_all(pages)
 
-    # Update chapter count on the Book row
+    # Update chapter count on the Book row; set SMIL overlay flag if present
     book = await session.get(Book, content_item.id)
     if book:
         chapter_numbers = {c.chapter_number for c in chunks}
         book.chapter_count = max(chapter_numbers, default=0)
+        if has_smil:
+            book.has_audio_overlay = True
+            book.audio_overlay_status = "pending"
 
     content_item.status = "processing"
     await session.commit()
@@ -203,10 +218,12 @@ async def get_book(
         )
     )
 
+    has_audio = bool(book and book.audio_file_path)
     return BookDetailResponse(
         id=content_item.id,
         title=content_item.title,
         description=content_item.description,
+        register=content_item.register,
         status=content_item.status,
         word_count=content_item.word_count,
         page_count=page_count,
@@ -214,6 +231,11 @@ async def get_book(
         language_code=language.code if language else "unknown",
         chapter_count=book.chapter_count if book else None,
         created_at=content_item.created_at,
+        has_audio=has_audio,
+        audio_duration_ms=book.audio_duration_ms if book else None,
+        has_audio_overlay=book.has_audio_overlay if book else False,
+        audio_overlay_status=book.audio_overlay_status if book else "none",
+        tts_status=book.tts_status if book else "none",
     )
 
 
@@ -294,6 +316,7 @@ async def get_pages(
                                     f=word_data.get("feats", ""),
                                     dep_head=word_data.get("dep_head", 0),
                                     dep_rel=word_data.get("dep_rel", ""),
+                                    hint=word_data.get("hint"),
                                     status=word_data.get("status", "new"),
                                 )
                             )
@@ -394,14 +417,405 @@ async def delete_book(
 
     book = await session.get(Book, book_id)
     file_path = book.file_path if book else None
+    audio_file_path = book.audio_file_path if book else None
 
     await _content_service.delete_book(session, book_id)
     await session.commit()
 
-    if file_path:
-        settings = get_settings()
-        abs_path = os.path.join(settings.storage_root, file_path)
+    settings = get_settings()
+    for rel_path in filter(None, [file_path, audio_file_path]):
+        abs_path = os.path.join(settings.storage_root, rel_path)
         try:
             os.remove(abs_path)
         except OSError:
             pass  # File already gone or never written — not fatal
+
+
+# ---------------------------------------------------------------------------
+# Audio routes (SMIL-only — no external upload)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{book_id}/audio/status", response_model=AudioStatusResponse)
+async def get_audio_status(
+    book_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> AudioStatusResponse:
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    book = await session.get(Book, book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    from src.infrastructure.db.models.audio import SentenceAlignment
+    sentences_aligned = await session.scalar(
+        sa.select(sa.func.count()).where(
+            SentenceAlignment.page_id.in_(
+                sa.select(ContentPage.id).where(ContentPage.content_item_id == book_id)
+            )
+        ).select_from(SentenceAlignment)
+    ) or 0
+
+    return AudioStatusResponse(
+        has_audio_overlay=book.has_audio_overlay,
+        audio_overlay_status=book.audio_overlay_status,
+        audio_duration_ms=book.audio_duration_ms,
+        sentences_aligned=sentences_aligned,
+    )
+
+
+@router.get("/{book_id}/audio/status/stream")
+async def stream_audio_status(
+    book_id: uuid.UUID,
+    request: Request,
+    token: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+) -> EventSourceResponse:
+    """SSE stream for audio alignment progress. Accepts ?token= since EventSource cannot set headers."""
+    raw_token = token or ""
+    if not raw_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            raw_token = auth_header[len("Bearer "):]
+
+    user_id: uuid.UUID | None = None
+    if raw_token:
+        try:
+            payload = decode_token(raw_token)
+            if payload.get("type") == "access":
+                user_id = uuid.UUID(payload["sub"])
+        except Exception:
+            pass
+
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    book = await session.get(Book, book_id)
+    overlay_status = book.audio_overlay_status if book else None
+
+    async def event_generator() -> AsyncGenerator[dict, None]:
+        if overlay_status in ("complete", "failed"):
+            event = "complete" if overlay_status == "complete" else "failed"
+            yield {"data": json.dumps({"event": event, "data": {}})}
+            return
+
+        channel = f"audio-align:{book_id}"
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(channel)
+        try:
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    payload = json.loads(message["data"])
+                    yield {"data": json.dumps(payload)}
+                    if payload.get("event") in ("complete", "failed"):
+                        break
+        finally:
+            await pubsub.unsubscribe(channel)
+            await pubsub.close()
+
+    return EventSourceResponse(event_generator())
+
+
+@router.get("/{book_id}/audio/stream")
+async def stream_audio(
+    book_id: uuid.UUID,
+    request: Request,
+    token: str | None = Query(default=None, description="JWT token (for <audio> elements that cannot set headers)"),
+    file_path: str | None = Query(default=None, description="Storage-relative path to a specific audio file"),
+    session: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Stream audio file.
+
+    Accepts Bearer Authorization header or ?token= query param.
+    For SMIL books with multiple audio files, pass ?file_path= (from alignment response).
+    Falls back to book.audio_file_path when file_path is not given.
+    """
+    import jwt as pyjwt
+    current_user: User | None = None
+
+    raw_token = token
+    if not raw_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            raw_token = auth_header[len("Bearer "):]
+
+    if raw_token:
+        try:
+            payload = decode_token(raw_token)
+            if payload.get("type") == "access":
+                user_id_str = payload.get("sub")
+                if user_id_str:
+                    current_user = await session.get(User, uuid.UUID(user_id_str))
+        except (pyjwt.InvalidTokenError, ValueError):
+            pass
+
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not current_user.is_active:
+        raise HTTPException(status_code=401, detail="User inactive")
+
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    book = await session.get(Book, book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    settings = get_settings()
+
+    if file_path:
+        # Validate that the requested file is within this book's audio directory.
+        # Normalize to prevent path traversal.
+        allowed_prefix = os.path.join("books", str(book_id), "audio") + os.sep
+        norm = os.path.normpath(file_path)
+        if not norm.startswith(os.path.normpath(allowed_prefix)):
+            raise HTTPException(status_code=403, detail="Access denied")
+        abs_path = os.path.join(settings.storage_root, norm)
+    else:
+        if not book.audio_file_path:
+            raise HTTPException(status_code=404, detail="No audio file for this book")
+        abs_path = os.path.join(settings.storage_root, book.audio_file_path)
+
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail="Audio file not found on disk")
+
+    ext = os.path.splitext(abs_path)[1].lower()
+    media_type_map = {
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".ogg": "audio/ogg",
+        ".wav": "audio/wav",
+        ".aac": "audio/aac",
+        ".flac": "audio/flac",
+    }
+    media_type = media_type_map.get(ext, "application/octet-stream")
+
+    def _iter_file(path: str, chunk_size: int = 65536):
+        with open(path, "rb") as f:
+            while chunk := f.read(chunk_size):
+                yield chunk
+
+    file_size = os.path.getsize(abs_path)
+    return StreamingResponse(
+        _iter_file(abs_path),
+        media_type=media_type,
+        headers={
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": f'inline; filename="audio{ext}"',
+        },
+    )
+
+
+@router.delete("/{book_id}/audio", status_code=204)
+async def delete_audio(
+    book_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete extracted SMIL audio files and all sentence alignments for this book."""
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    book = await session.get(Book, book_id)
+    if not book or not book.has_audio_overlay:
+        raise HTTPException(status_code=404, detail="No audio attached to this book")
+
+    # Delete the entire audio directory for this book
+    settings = get_settings()
+    audio_dir = os.path.join(settings.storage_root, "books", str(book_id), "audio")
+    if os.path.isdir(audio_dir):
+        import shutil
+        try:
+            shutil.rmtree(audio_dir)
+        except OSError:
+            pass
+
+    await _audio_repo.delete_alignments_for_book(session, book_id)
+
+    book.audio_file_path = None
+    book.audio_duration_ms = None
+    book.has_audio_overlay = False
+    book.audio_overlay_status = "none"
+    await session.commit()
+
+
+@router.get(
+    "/{book_id}/pages/{page_number}/alignments",
+    response_model=list[SentenceAlignmentResponse],
+)
+async def get_page_alignments(
+    book_id: uuid.UUID,
+    page_number: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> list[SentenceAlignmentResponse]:
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    page = await session.scalar(
+        sa.select(ContentPage).where(
+            ContentPage.content_item_id == book_id,
+            ContentPage.page_number == page_number,
+        )
+    )
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+
+    alignments = await _audio_repo.get_alignments_for_page(session, page.id)
+    return [SentenceAlignmentResponse(**a) for a in alignments]
+
+
+# ---------------------------------------------------------------------------
+# TTS routes
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{book_id}/audio/generate-tts", status_code=202)
+async def generate_tts(
+    book_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+    arq_pool: ArqRedis = Depends(get_arq_pool),
+) -> dict:
+    """Dispatch TTS generation for a book that has no embedded audio."""
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    if content_item.status != "completed":
+        raise HTTPException(status_code=409, detail="Book is not yet fully tokenized")
+
+    book = await session.get(Book, book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    if book.tts_status in ("in_progress", "pending"):
+        raise HTTPException(status_code=409, detail="TTS generation already in progress")
+
+    book.tts_status = "pending"
+    await session.commit()
+
+    await arq_pool.enqueue_job("generate_tts_audio", str(book_id))
+    return {"status": "queued"}
+
+
+@router.get("/{book_id}/audio/tts-status", response_model=TtsStatusResponse)
+async def get_tts_status(
+    book_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> TtsStatusResponse:
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    book = await session.get(Book, book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    pages_total = await session.scalar(
+        sa.select(sa.func.count()).select_from(ContentPage).where(
+            ContentPage.content_item_id == book_id
+        )
+    ) or 0
+
+    pages_ready = await session.scalar(
+        sa.select(sa.func.count()).select_from(ContentPage).where(
+            ContentPage.content_item_id == book_id,
+            ContentPage.tts_manifest_path.is_not(None),
+        )
+    ) or 0
+
+    return TtsStatusResponse(
+        tts_status=book.tts_status,
+        pages_total=pages_total,
+        pages_ready=pages_ready,
+    )
+
+
+@router.get("/{book_id}/tts/{page_number}/{filename:path}")
+async def serve_tts_file(
+    book_id: uuid.UUID,
+    page_number: int,
+    filename: str,
+    request: Request,
+    token: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Serve DASH manifest and segment files for TTS audio.
+
+    Accepts ?token= since dash.js segment requests cannot set Authorization headers directly.
+    """
+    raw_token = token or ""
+    if not raw_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            raw_token = auth_header[len("Bearer "):]
+
+    user_id: uuid.UUID | None = None
+    if raw_token:
+        try:
+            payload = decode_token(raw_token)
+            if payload.get("type") == "access":
+                user_id = uuid.UUID(payload["sub"])
+        except Exception:
+            pass
+
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    settings = get_settings()
+
+    # Validate path is within this book's TTS directory
+    rel_path = os.path.join("books", str(book_id), "tts", str(page_number), filename)
+    abs_path = os.path.realpath(os.path.join(settings.storage_root, rel_path))
+    expected_prefix = os.path.realpath(
+        os.path.join(settings.storage_root, "books", str(book_id), "tts")
+    )
+    if not abs_path.startswith(expected_prefix + os.sep):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    ext = os.path.splitext(filename)[1].lower()
+    content_type_map = {
+        ".mpd": "application/dash+xml",
+        ".mp4": "video/mp4",
+        ".m4s": "video/iso.segment",
+        ".m4a": "audio/mp4",
+    }
+    content_type = content_type_map.get(ext, "application/octet-stream")
+
+    file_size = os.path.getsize(abs_path)
+
+    def iter_file():
+        with open(abs_path, "rb") as f:
+            while chunk := f.read(65536):
+                yield chunk
+
+    return StreamingResponse(
+        iter_file(),
+        media_type=content_type,
+        headers={
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )

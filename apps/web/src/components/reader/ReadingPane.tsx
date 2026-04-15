@@ -1,12 +1,16 @@
 "use client"
 
-import { Fragment, useRef, useState } from "react"
+import { Fragment, useEffect, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import type { TokenWithStatus } from "@/src/lib/api/books"
 import { getBookPages } from "@/src/lib/api/books"
 import { useReaderStore } from "@/src/stores/reader"
+import { useAudioPlayerStore } from "@/src/stores/audioPlayer"
+import { useReaderSettings, FONT_SIZE_CLASS, LINE_SPACING_CLASS, TEXT_WIDTH_CLASS } from "@/src/stores/readerSettings"
+import { sentenceText } from "@/src/lib/sentences"
 import { WordToken } from "./WordToken"
+import { PageOptionsMenu } from "./PageOptionsMenu"
 
 const MAX_SELECTION_CHARS = 500
 
@@ -20,9 +24,10 @@ interface ParagraphsProps {
   activeToken: TokenWithStatus | null
   selectionRange: [number, number] | null
   noWordSpacing: boolean
-  onTokenClick: (token: TokenWithStatus) => void
-  onTokenMouseDown: (tokenIndex: number) => void
-  onTokenMouseEnter: (tokenIndex: number) => void
+  activeSentenceIndex: number | null
+  fontSizeClass: string
+  lineSpacingClass: string
+  onTokenClick: (token: TokenWithStatus, e: React.MouseEvent<HTMLSpanElement>) => void
 }
 
 function Paragraphs({
@@ -30,9 +35,10 @@ function Paragraphs({
   activeToken,
   selectionRange,
   noWordSpacing,
+  activeSentenceIndex,
+  fontSizeClass,
+  lineSpacingClass,
   onTokenClick,
-  onTokenMouseDown,
-  onTokenMouseEnter,
 }: ParagraphsProps) {
   // Group by paragraph while preserving flat index
   const groups: Array<Array<{ token: TokenWithStatus; idx: number }>> = []
@@ -44,30 +50,34 @@ function Paragraphs({
   return (
     <div className="space-y-5">
       {groups.map((paraTokens, pi) => (
-        <p key={pi} className="leading-9 text-lg text-zinc-200">
+        <p key={pi} className={`${lineSpacingClass} ${fontSizeClass} text-zinc-200`}>
           {paraTokens.map(({ token, idx }, i) => {
             const isHighlighted =
               selectionRange !== null &&
               idx >= selectionRange[0] &&
               idx <= selectionRange[1]
-            // Insert a space before this token unless it's the first token,
-            // it's closing punctuation (comma, period, etc.), or the previous
-            // token is opening punctuation (parenthesis, etc.).
-            const prevW = paraTokens[i - 1]?.token.w ?? ""
+            const prevToken = paraTokens[i - 1]?.token
+            const prevW = prevToken?.w ?? ""
             const isClosingPunct = /^[.,!?;:)\]»…\-—–。，！？；：」』]/.test(token.w)
             const prevIsOpeningPunct = /^[(\[«「『]$/.test(prevW)
             const spaceBefore = !noWordSpacing && i > 0 && !isClosingPunct && !prevIsOpeningPunct
+            const isActiveSentence = activeSentenceIndex !== null && token.si === activeSentenceIndex
+            const prevIsActiveSentence = activeSentenceIndex !== null && prevToken?.si === activeSentenceIndex
+            const spaceIsActive = spaceBefore && isActiveSentence && prevIsActiveSentence
             return (
               <Fragment key={`${pi}-${token.si}-${i}`}>
-                {spaceBefore && " "}
+                {spaceBefore && (
+                  spaceIsActive
+                    ? <span className="underline decoration-amber-400 decoration-2 underline-offset-2"> </span>
+                    : " "
+                )}
                 <WordToken
                   token={token}
                   tokenIndex={idx}
                   isActive={activeToken?.w === token.w && activeToken?.si === token.si}
                   isHighlighted={isHighlighted}
+                  isAudioActive={isActiveSentence}
                   onClick={onTokenClick}
-                  onMouseDown={onTokenMouseDown}
-                  onMouseEnter={onTokenMouseEnter}
                 />
               </Fragment>
             )
@@ -88,17 +98,37 @@ interface ReadingPaneProps {
 
 export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChange }: ReadingPaneProps) {
   const noWordSpacing = isNoSpaceLanguage(languageCode)
-  const { activeToken, setActiveToken, setSelectedText } = useReaderStore()
+  const { activeToken, setActiveToken, setSelectedText, setPanelAnchor, setSentenceContext } = useReaderStore()
+  const { activeSentenceIndex, seekToSentence, seekTo } = useAudioPlayerStore()
+  const { fontSize, lineSpacing, textWidth } = useReaderSettings()
 
-  // Drag selection state — stored in refs to avoid re-renders during drag
-  const dragRef = useRef<{ active: boolean; startIdx: number; endIdx: number }>({
-    active: false,
-    startIdx: -1,
-    endIdx: -1,
-  })
-  const hasDraggedRef = useRef(false)
-  // Visible highlight range (state so React re-renders the tokens)
+  const containerRef = useRef<HTMLDivElement>(null)
+  // Set to true after committing a text selection so the subsequent click event
+  // on the token under the pointer does not re-open word mode.
+  const selectionJustCommittedRef = useRef(false)
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null)
+
+  // Swipe navigation
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null)
+
+  // Scroll position restore
+  const scrollRestoredRef = useRef(false)
+  useEffect(() => { scrollRestoredRef.current = false }, [page])
+
+  // Save scroll position on scroll (debounced 500ms)
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    let timer: ReturnType<typeof setTimeout>
+    const handleScroll = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        localStorage.setItem(`slovo-scroll-${bookId}-${page}`, String(container.scrollTop))
+      }, 500)
+    }
+    container.addEventListener("scroll", handleScroll, { passive: true })
+    return () => { clearTimeout(timer); container.removeEventListener("scroll", handleScroll) }
+  }, [bookId, page])
 
   const { data, isLoading } = useQuery({
     queryKey: ["book-pages", bookId, page],
@@ -110,57 +140,93 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
 
   const currentPage = data?.items[0]
 
-  function handleTokenMouseDown(tokenIndex: number) {
-    if (!activeToken) return  // only track drag when panel is open
-    dragRef.current = { active: true, startIdx: tokenIndex, endIdx: tokenIndex }
-    hasDraggedRef.current = false
-    setSelectionRange(null)
-  }
+  // Restore scroll position once data loads for this page
+  useEffect(() => {
+    if (!currentPage || scrollRestoredRef.current) return
+    scrollRestoredRef.current = true
+    const container = containerRef.current
+    if (!container) return
+    const saved = localStorage.getItem(`slovo-scroll-${bookId}-${page}`)
+    if (saved) container.scrollTop = Number(saved)
+  }, [currentPage, bookId, page])
 
-  function handleTokenMouseEnter(tokenIndex: number) {
-    if (!dragRef.current.active) return
-    dragRef.current.endIdx = tokenIndex
-    hasDraggedRef.current = true
-    const lo = Math.min(dragRef.current.startIdx, dragRef.current.endIdx)
-    const hi = Math.max(dragRef.current.startIdx, dragRef.current.endIdx)
+  /**
+   * Called on mouseup and touchend. Reads the native browser selection and,
+   * if it spans 2+ tokens, commits it as a phrase selection.
+   */
+  function commitNativeSelection() {
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !currentPage) return
+
+    const range = sel.getRangeAt(0)
+    const container = containerRef.current
+    if (!container || !range.intersectsNode(container)) return
+
+    const selectedString = sel.toString().trim()
+    if (!selectedString || selectedString.length < 2) return
+
+    // Find all token elements that the selection range covers
+    const tokenEls = container.querySelectorAll("[data-token-index]")
+    const indices: number[] = []
+    tokenEls.forEach((el) => {
+      if (range.intersectsNode(el)) {
+        const idx = parseInt(el.getAttribute("data-token-index") ?? "", 10)
+        if (!isNaN(idx)) indices.push(idx)
+      }
+    })
+
+    if (indices.length < 2) {
+      setSelectionRange(null)
+      return
+    }
+
+    const lo = Math.min(...indices)
+    const hi = Math.max(...indices)
     setSelectionRange([lo, hi])
-  }
 
-  function handleMouseUp() {
-    if (!dragRef.current.active) return
-    const didDrag = hasDraggedRef.current
-
-    const lo = Math.min(dragRef.current.startIdx, dragRef.current.endIdx)
-    const hi = Math.max(dragRef.current.startIdx, dragRef.current.endIdx)
-
-    dragRef.current.active = false
-    hasDraggedRef.current = false
-
-    if (!didDrag || !activeToken || !currentPage) {
-      setSelectionRange(null)
-      return
-    }
-
-    // Collect text from the selected token range
-    const selectedTokens = currentPage.tokens.slice(lo, hi + 1)
+    const tokens = currentPage.tokens.slice(lo, hi + 1)
     const sep = noWordSpacing ? "" : " "
-    const text = selectedTokens.map((t) => t.w).join(sep).trim()
-    const wordCount = noWordSpacing
-      ? selectedTokens.filter((t) => t.pos !== "PUNCT").length
-      : text.split(/\s+/).filter(Boolean).length
+    const text = tokens.map((t) => t.w).join(sep).trim()
 
-    if (wordCount < 2) {
-      setSelectionRange(null)
-      return
+    setSelectedText(text.slice(0, MAX_SELECTION_CHARS * 2), tokens)
+    selectionJustCommittedRef.current = true
+
+    // Anchor the panel near the selection
+    const selRect = range.getBoundingClientRect()
+    if (selRect.width > 0) {
+      setPanelAnchor({ x: selRect.left + selRect.width / 2, top: selRect.top, bottom: selRect.bottom })
     }
 
-    setSelectedText(text.slice(0, MAX_SELECTION_CHARS * 2), selectedTokens)
+    // Replace the native selection highlight with our custom token highlight
+    sel.removeAllRanges()
   }
 
-  function handleTokenClick(token: TokenWithStatus) {
-    // If we just finished a drag, ignore the click that fires after mouseup
-    if (hasDraggedRef.current) {
-      hasDraggedRef.current = false
+  function handleTouchStart(e: React.TouchEvent) {
+    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+  }
+
+  function handleTouchEnd(e: React.TouchEvent) {
+    if (touchStartRef.current) {
+      const touch = e.changedTouches[0]
+      const dx = touch.clientX - touchStartRef.current.x
+      const dy = touch.clientY - touchStartRef.current.y
+      touchStartRef.current = null
+      // Horizontal swipe: more than 60px horizontal, dominantly horizontal
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
+        if (dx < 0 && page < totalPages) onPageChange(page + 1)
+        else if (dx > 0 && page > 1) onPageChange(page - 1)
+        return
+      }
+    }
+    // Small delay to let iOS finalise the selection object before we read it
+    setTimeout(commitNativeSelection, 50)
+  }
+
+  function handleTokenClick(token: TokenWithStatus, e: React.MouseEvent<HTMLSpanElement>) {
+    // Suppress word-click when a phrase selection was just committed (mouseup
+    // fires before click, so the flag is already set here)
+    if (selectionJustCommittedRef.current) {
+      selectionJustCommittedRef.current = false
       return
     }
 
@@ -169,18 +235,33 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
 
     if (activeToken?.w === token.w && activeToken?.si === token.si) {
       setActiveToken(null)
+      setPanelAnchor(null)
+      setSentenceContext(null)
     } else {
       setActiveToken(token)
+      const rect = e.currentTarget.getBoundingClientRect()
+      setPanelAnchor({ x: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom })
+
+      // Extract sentence context for DefinitionPanel and Anki
+      if (currentPage) {
+        const sentenceTokens = currentPage.tokens.filter((t) => t.si === token.si)
+        setSentenceContext(sentenceText(sentenceTokens, noWordSpacing))
+      }
     }
+
+    // Seek audio to the start of the clicked sentence (no-op if no alignments)
+    const target = seekToSentence(token.si)
+    if (target) seekTo(target.ms, target.audioFile)
   }
 
   return (
     <div className="flex h-full flex-col">
       <div
-        // Disable browser text selection when panel is open so our token-based
-        // drag selection takes over cleanly
-        className={`flex-1 overflow-y-auto px-12 py-8${activeToken ? " select-none" : ""}`}
-        onMouseUp={handleMouseUp}
+        ref={containerRef}
+        className="flex-1 overflow-y-auto px-12 py-8"
+        onMouseUp={commitNativeSelection}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
         onDragStart={(e) => e.preventDefault()}
       >
         {isLoading ? (
@@ -190,7 +271,7 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
             ))}
           </div>
         ) : currentPage ? (
-          <div className="mx-auto max-w-2xl">
+          <div className={`mx-auto ${TEXT_WIDTH_CLASS[textWidth]}`}>
             {currentPage.chapter_name && (
               <p className="mb-8 text-sm font-medium uppercase tracking-widest text-zinc-500">
                 {currentPage.chapter_name}
@@ -207,9 +288,10 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
                 activeToken={activeToken}
                 selectionRange={selectionRange}
                 noWordSpacing={noWordSpacing}
+                activeSentenceIndex={activeSentenceIndex}
+                fontSizeClass={FONT_SIZE_CLASS[fontSize]}
+                lineSpacingClass={LINE_SPACING_CLASS[lineSpacing]}
                 onTokenClick={handleTokenClick}
-                onTokenMouseDown={handleTokenMouseDown}
-                onTokenMouseEnter={handleTokenMouseEnter}
               />
             )}
           </div>
@@ -227,7 +309,10 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
           <ChevronLeft className="h-4 w-4" />
           Previous
         </button>
-        <span className="text-sm text-zinc-500">Page {page} of {totalPages}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-zinc-500">Page {page} of {totalPages}</span>
+          <PageOptionsMenu />
+        </div>
         <button
           onClick={() => onPageChange(page + 1)}
           disabled={page >= totalPages}

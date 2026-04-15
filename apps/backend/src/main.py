@@ -16,6 +16,7 @@ from src.api.routes import books as books_router
 from src.api.routes import dictionary as dictionary_router
 from src.api.routes import translation as translation_router
 from src.api.routes import grammar as grammar_router
+from src.api.routes import synonyms as synonyms_router
 from src.api.routes import users as users_router
 from src.api.routes import languages as languages_router
 from src.api.routes import vocabulary as vocabulary_router
@@ -28,8 +29,12 @@ from src.api.routes.admin import deepl_instances as admin_deepl_instances_router
 from src.api.routes.admin import llm as admin_llm_router
 from src.api.routes.admin import data as admin_data_router
 from src.api.routes.admin import frequencies as admin_frequencies_router
+from src.api.routes.admin import tts as admin_tts_router
 from src.api.routes import phrases as phrases_router
 from src.api.routes import stats as stats_router
+from src.api.routes import sentences as sentences_router
+from src.api.routes import activity as activity_router
+from src.api.routes.admin import anki as admin_anki_router
 from src.api.routes import setup as setup_router  # noqa: E402
 from src.core import get_settings
 
@@ -66,6 +71,7 @@ app.include_router(vocabulary_router.router)
 app.include_router(dictionary_router.router)
 app.include_router(translation_router.router)
 app.include_router(grammar_router.router)
+app.include_router(synonyms_router.router)
 app.include_router(admin_languages_router.router)
 app.include_router(admin_providers_router.router)
 app.include_router(admin_users_router.router)
@@ -75,6 +81,10 @@ app.include_router(admin_deepl_instances_router.router)
 app.include_router(admin_llm_router.router)
 app.include_router(admin_data_router.router)
 app.include_router(admin_frequencies_router.router)
+app.include_router(admin_tts_router.router)
 app.include_router(phrases_router.router)
 app.include_router(stats_router.router)
+app.include_router(sentences_router.router)
+app.include_router(activity_router.router)
+app.include_router(admin_anki_router.router)
 app.include_router(setup_router.router)

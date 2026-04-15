@@ -1,13 +1,14 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useState } from "react"
-import { X, Loader2, AlertTriangle, ArrowLeft, BrainCircuit } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { X, Loader2, AlertTriangle, ArrowLeft, BrainCircuit, Volume2, Copy, Check } from "lucide-react"
 import type { PageListResponse, TokenWithStatus } from "@/src/lib/api/books"
 import { upsertWordStatus } from "@/src/lib/api/vocabulary"
 import { translate, getTranslationAvailable } from "@/src/lib/api/translation"
 import { lookup, type FrequencyInfo } from "@/src/lib/api/dictionary"
 import { explainGrammar, type GrammarExplainResponse } from "@/src/lib/api/grammar"
+import { getSynonymNuance, type SynonymNuanceResponse } from "@/src/lib/api/synonyms"
 import { createPhrase } from "@/src/lib/api/phrases"
 import { useReaderStore } from "@/src/stores/reader"
 import { getLanguageLabel } from "@/src/lib/language-flags"
@@ -15,12 +16,35 @@ import { cn } from "@/src/lib/cn"
 
 const MAX_SELECTION_CHARS = 500
 
+// Map 2-letter language codes to BCP 47 tags for SpeechSynthesis
+const SPEECH_LANG: Record<string, string> = {
+  ru: "ru-RU",
+  pl: "pl-PL",
+  ko: "ko-KR",
+  zh: "zh-CN",
+  de: "de-DE",
+  fr: "fr-FR",
+  es: "es-ES",
+  ja: "ja-JP",
+  it: "it-IT",
+  pt: "pt-PT",
+}
+
+function speakWord(word: string, langCode: string): void {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return
+  window.speechSynthesis.cancel()
+  const utt = new SpeechSynthesisUtterance(word)
+  utt.lang = SPEECH_LANG[langCode] ?? langCode
+  utt.rate = 0.85
+  window.speechSynthesis.speak(utt)
+}
+
 const STATUSES = [
-  { value: "new", label: "New", color: "bg-blue-600 hover:bg-blue-500" },
-  { value: "learning", label: "Learning", color: "bg-yellow-600 hover:bg-yellow-500" },
-  { value: "known", label: "Known", color: "bg-green-700 hover:bg-green-600" },
-  { value: "well_known", label: "Well known", color: "bg-green-900 hover:bg-green-800" },
-  { value: "ignored", label: "Ignore", color: "bg-zinc-700 hover:bg-zinc-600" },
+  { value: "new", label: "New", color: "bg-sky-700 hover:bg-sky-600" },
+  { value: "learning", label: "Learning", color: "bg-emerald-600 hover:bg-emerald-500" },
+  { value: "known", label: "Known", color: "bg-emerald-900 hover:bg-emerald-800" },
+  { value: "well_known", label: "Well known", color: "bg-zinc-700 hover:bg-zinc-600" },
+  { value: "ignored", label: "Ignore", color: "bg-zinc-800 hover:bg-zinc-700 text-zinc-400" },
 ] as const
 
 const POS_LABELS: Record<string, string> = {
@@ -100,27 +124,49 @@ function parseFeats(feats: string): Array<{ key: string; value: string }> {
 }
 
 interface DefinitionPanelProps {
-  token: TokenWithStatus
+  token: TokenWithStatus | null
   language: string
   languageId: number
   languageCode: string
   bookId?: string
   currentPage?: number
+  register?: string | null
 }
 
-export function DefinitionPanel({ token, language, languageId, languageCode, bookId, currentPage }: DefinitionPanelProps) {
-  const { clearActive, setActiveToken, setSelectedText, activeToken, selectedText, selectedTokens } = useReaderStore()
+export function DefinitionPanel({ token, language, languageId, languageCode, bookId, currentPage, register }: DefinitionPanelProps) {
+  const { clearActive, setActiveToken, setSelectedText, activeToken, selectedText, selectedTokens, panelAnchor, sentenceContext } = useReaderStore()
   const queryClient = useQueryClient()
+
+  // Copy-to-clipboard state
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  function copyToClipboard(text: string, key: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedKey(key)
+      setTimeout(() => setCopiedKey(null), 1500)
+    })
+  }
 
   const isSelectionMode = !!selectedText
   const isOverLimit = isSelectionMode && selectedText.length > MAX_SELECTION_CHARS
+
+  const synonymsMutation = useMutation<SynonymNuanceResponse, Error>({
+    mutationFn: () =>
+      getSynonymNuance({
+        language_id: languageId,
+        language_code: languageCode,
+        word: token!.w,
+        pos: token!.pos,
+        lemma: token!.l || token!.w,
+        context_sentence: undefined,
+      }),
+  })
 
   const grammarMutation = useMutation<GrammarExplainResponse, Error>({
     mutationFn: () => {
       const tokens = (selectedTokens ?? [])
         .filter((t) => t.pos !== "PUNCT")
         .map((t) => ({ w: t.w, l: t.l, pos: t.pos, feats: t.f ?? "", dep_head: t.dep_head ?? 0, dep_rel: t.dep_rel ?? "" }))
-      return explainGrammar(tokens, languageCode)
+      return explainGrammar(tokens, languageCode, register)
     },
   })
 
@@ -146,12 +192,36 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedText])
 
-  // Vocabulary key: always surface form
-  const surfaceKey = token.w
+  useEffect(() => {
+    synonymsMutation.reset()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token?.w])
+
+  // Keyboard shortcuts: 1-5 set word status when in word mode
+  useEffect(() => {
+    if (isSelectionMode || !token) return
+    const STATUS_KEYS: Record<string, string> = {
+      "1": "new", "2": "learning", "3": "known", "4": "well_known", "5": "ignored",
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      const status = STATUS_KEYS[e.key]
+      if (status) {
+        e.preventDefault()
+        statusMutation.mutate({ status })
+      }
+    }
+    document.addEventListener("keydown", handleKey)
+    return () => document.removeEventListener("keydown", handleKey)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSelectionMode, token])
+
+  // Vocabulary key: always surface form (null when in selection-only mode)
+  const surfaceKey = token?.w ?? ""
   // For translation/dictionary: use lemma when available
-  const lookupWord = token.l || token.w
+  const lookupWord = token ? (token.l || token.w) : ""
   // What to translate: the selection (if any) or the lookup word
-  const translationTarget = isSelectionMode ? selectedText : lookupWord
+  const translationTarget = isSelectionMode ? selectedText : (lookupWord || null)
 
   const { data: availability } = useQuery({
     queryKey: ["translation-available"],
@@ -160,19 +230,23 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
   })
   const translationEnabled = availability?.available ?? false
 
+  const [hintSaved, setHintSaved] = useState(false)
+
   const statusMutation = useMutation({
-    mutationFn: (status: string) =>
+    mutationFn: ({ status, hint }: { status: string; hint?: string | null }) =>
       upsertWordStatus({
         word: surfaceKey,
         status,
         language_id: languageId,
-        lemma: token.l || "",
-        pos: token.pos || "",
-        reading: token.r || "",
-        gender: token.g || "",
-        feats: token.f || "",
+        lemma: token?.l || "",
+        pos: token?.pos || "",
+        reading: token?.r || "",
+        gender: token?.g || "",
+        feats: token?.f || "",
+        hint,
+        sentence_context: sentenceContext ?? undefined,
       }),
-    onSuccess: (_, status) => {
+    onSuccess: (_, { status }) => {
       const newStatus = status as TokenWithStatus["status"]
 
       if (activeToken) {
@@ -201,7 +275,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
 
   const { data: translationData, isLoading: translationLoading, isError: translationError } = useQuery({
     queryKey: ["translation", translationTarget, language],
-    queryFn: () => translate(translationTarget, language),
+    queryFn: () => translate(translationTarget!, language),
     enabled: translationEnabled && !isOverLimit && !!translationTarget && !!language,
     staleTime: Infinity,
     retry: false,
@@ -214,24 +288,75 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
     staleTime: Infinity,
   })
 
-  const posLabel = token.pos ? (POS_LABELS[token.pos] ?? token.pos) : null
+  const posLabel = token?.pos ? (POS_LABELS[token.pos] ?? token.pos) : null
+
+  /**
+   * On tablet (768–1023px), position the floating card near the tapped word
+   * or text selection. Phone and desktop breakpoints are handled by CSS only.
+   */
+  const anchorStyle = useMemo((): React.CSSProperties => {
+    if (!panelAnchor || typeof window === "undefined") return {}
+    const w = window.innerWidth
+    if (w < 768 || w >= 1024) return {}
+
+    const PANEL_W = 320
+    const GAP = 8
+    const spaceBelow = window.innerHeight - panelAnchor.bottom - GAP
+
+    const top =
+      spaceBelow >= 160
+        ? panelAnchor.bottom + GAP
+        : Math.max(GAP, panelAnchor.top - Math.min(window.innerHeight * 0.7, 480) - GAP)
+
+    let left = panelAnchor.x - PANEL_W / 2
+    left = Math.max(GAP, Math.min(left, w - PANEL_W - GAP))
+
+    return { top, left, bottom: "auto" }
+  }, [panelAnchor])
 
   return (
-    <aside className="flex h-full w-80 flex-col border-l border-zinc-800 bg-zinc-900">
-      {/* Header */}
-      <div className="flex items-start justify-between border-b border-zinc-800 p-4">
+    <>
+      {/* Backdrop — mobile/tablet only */}
+      <div
+        className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+        onClick={clearActive}
+      />
+
+      <aside
+        style={anchorStyle}
+        className={cn(
+          // Base: flex column, dark bg, fixed overlay
+          "flex flex-col bg-zinc-900 fixed z-40",
+          // Phone (<md): full-width bottom drawer
+          "inset-x-0 bottom-0 rounded-t-2xl max-h-[75vh]",
+          // Tablet (md–lg): floating card — position set by anchorStyle above;
+          // CSS only handles visual appearance + resets phone inset
+          "md:inset-x-auto md:bottom-auto md:w-80 md:rounded-2xl md:max-h-[70vh] md:shadow-2xl md:ring-1 md:ring-zinc-800",
+          // Desktop (lg+): inline side panel — not fixed, full height
+          "lg:relative lg:inset-auto lg:z-auto lg:h-full lg:w-80 lg:rounded-none lg:ring-0 lg:border-l lg:border-zinc-800 lg:max-h-none lg:shadow-none"
+        )}
+      >
+        {/* Drag handle — phone only */}
+        <div className="flex justify-center pt-3 pb-1 md:hidden">
+          <div className="h-1 w-10 rounded-full bg-zinc-700" />
+        </div>
+
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-zinc-800 p-4">
         {isSelectionMode ? (
           /* Selection mode header */
           <div className="min-w-0 flex-1 pr-2">
-            <div className="mb-1.5 flex items-center gap-1.5">
-              <button
-                onClick={() => setSelectedText(null)}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition"
-              >
-                <ArrowLeft className="h-3 w-3" />
-                Word view
-              </button>
-            </div>
+            {activeToken && (
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <button
+                  onClick={() => setSelectedText(null)}
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition"
+                >
+                  <ArrowLeft className="h-3 w-3" />
+                  Word view
+                </button>
+              </div>
+            )}
             <p className="text-sm text-zinc-300 leading-relaxed line-clamp-3 break-words">
               {selectedText}
             </p>
@@ -242,9 +367,25 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
         ) : (
           /* Word mode header */
           <div className="min-w-0 flex-1 pr-2">
-            <p className="text-xl font-semibold text-zinc-100 break-words">{token.w}</p>
-            {token.l && token.l !== token.w && (
-              <p className="text-sm text-zinc-400">{token.l}</p>
+            <div className="flex items-center gap-2">
+              <p className="text-xl font-semibold text-zinc-100 break-words">{token!.w}</p>
+              <button
+                onClick={() => speakWord(token!.w, languageCode)}
+                aria-label="Pronounce word"
+                className="shrink-0 rounded p-1 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+              >
+                <Volume2 className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => copyToClipboard(token!.w, "word")}
+                aria-label="Copy word"
+                className="shrink-0 rounded p-1 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+              >
+                {copiedKey === "word" ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            {token!.l && token!.l !== token!.w && (
+              <p className="text-sm text-zinc-400">{token!.l}</p>
             )}
             {posLabel && (
               <span className="mt-1.5 inline-block rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
@@ -375,12 +516,29 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
             )}
 
             <p className="text-xs text-zinc-700 italic">
-              Click a word or deselect to return to word view.
+              Tap a word to look it up.
             </p>
           </>
-        ) : (
+        ) : token ? (
           /* ── Word mode body ── */
           <>
+            {/* Sentence context */}
+            {sentenceContext && (
+              <div className="rounded-lg bg-zinc-800/40 p-3">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Context</p>
+                  <button
+                    onClick={() => copyToClipboard(sentenceContext, "context")}
+                    className="rounded p-0.5 text-zinc-600 transition hover:text-zinc-300"
+                    aria-label="Copy sentence"
+                  >
+                    {copiedKey === "context" ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                  </button>
+                </div>
+                <p className="text-sm text-zinc-300 leading-relaxed">{sentenceContext}</p>
+              </div>
+            )}
+
             {/* NLP metadata */}
             {(token.r || token.g || token.f) && (
               <div className="rounded-lg bg-zinc-800/60 p-3 space-y-2">
@@ -415,7 +573,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
                   <button
                     key={s.value}
                     disabled={statusMutation.isPending}
-                    onClick={() => statusMutation.mutate(s.value)}
+                    onClick={() => statusMutation.mutate({ status: s.value })}
                     className={cn(
                       "rounded-md px-2.5 py-1 text-xs font-medium text-white transition",
                       s.color,
@@ -449,15 +607,100 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
                         )}
                         <div className="space-y-0.5">
                           {r.translated_texts.map((t, i) => (
-                            <p key={i} className="text-sm text-zinc-200">{t}</p>
+                            <div key={i} className="flex items-center gap-1.5">
+                              <p className="flex-1 text-sm text-zinc-200">{t}</p>
+                              <button
+                                onClick={() => copyToClipboard(t, `trans-${r.target_lang}-${i}`)}
+                                className="shrink-0 rounded p-0.5 text-zinc-600 transition hover:text-zinc-300"
+                                aria-label="Copy translation"
+                              >
+                                {copiedKey === `trans-${r.target_lang}-${i}` ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                              </button>
+                            </div>
                           ))}
                         </div>
                       </div>
                     ))}
+                    {/* Save first translation as hint + set to Learning */}
+                    {(() => {
+                      const firstTranslation = translationData.results[0]?.translated_texts[0]
+                      if (!firstTranslation) return null
+                      return (
+                        <button
+                          onClick={() => {
+                            statusMutation.mutate({ status: "learning", hint: firstTranslation })
+                            setHintSaved(true)
+                            setTimeout(() => setHintSaved(false), 2000)
+                          }}
+                          disabled={statusMutation.isPending}
+                          className={cn(
+                            "mt-1 flex w-full items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition",
+                            hintSaved
+                              ? "border-emerald-700 bg-emerald-900/30 text-emerald-400"
+                              : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                          )}
+                        >
+                          {hintSaved ? "Saved as hint · Learning" : "Save translation + Learning"}
+                        </button>
+                      )
+                    })()}
                   </div>
                 ) : null}
               </div>
             )}
+
+            {/* Synonyms */}
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Synonyms
+              </p>
+              {synonymsMutation.isIdle && (
+                <button
+                  onClick={() => synonymsMutation.mutate()}
+                  className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 transition"
+                >
+                  <BrainCircuit className="h-3.5 w-3.5" />
+                  Find synonyms
+                </button>
+              )}
+              {synonymsMutation.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
+              )}
+              {synonymsMutation.isError && (
+                <p className="text-xs text-red-400">
+                  {synonymsMutation.error.message.includes("503")
+                    ? "No LLM provider configured."
+                    : "Synonym lookup failed. Try again."}
+                </p>
+              )}
+              {synonymsMutation.data && synonymsMutation.data.synonyms.length > 0 && (
+                <div className="space-y-2">
+                  {synonymsMutation.data.synonyms.map((s, i) => (
+                    <div key={i} className="rounded-lg bg-zinc-800 p-3 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-zinc-100">{s.word}</span>
+                        <span className={cn(
+                          "rounded px-1.5 py-0.5 text-xs capitalize",
+                          LABEL_CLASSES[s.register.toLowerCase()] ?? "bg-zinc-700/60 text-zinc-400"
+                        )}>
+                          {s.register}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">{s.nuance}</p>
+                      {s.example && (
+                        <p className="text-xs text-zinc-500 italic">{s.example}</p>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => synonymsMutation.reset()}
+                    className="text-xs text-zinc-600 hover:text-zinc-400 transition"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Dictionary */}
             <div>
@@ -517,8 +760,9 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
               )}
             </div>
           </>
-        )}
+        ) : null}
       </div>
-    </aside>
+      </aside>
+    </>
   )
 }

@@ -4,9 +4,10 @@ import shutil
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import get_db, require_admin
+from src.api.dependencies import get_db, get_redis, require_admin
 from src.core import get_settings
 from src.infrastructure.db.models.content import ContentItem
 from src.infrastructure.db.models.users import User
@@ -31,6 +32,7 @@ async def reset_all_data(
     body: DataResetRequest,
     _: User = Depends(require_admin),
     session: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> DataResetResponse:
     """Delete all books, pages, and vocabulary for all users. Irreversible."""
     if body.confirmation != CONFIRMATION_PHRASE:
@@ -46,6 +48,10 @@ async def reset_all_data(
     deleted_books = books_result.rowcount
 
     await session.commit()
+
+    # Flush stats cache for all users
+    async for key in redis.scan_iter("stats:*"):
+        await redis.delete(key)
 
     # Remove uploaded book files from disk
     settings = get_settings()

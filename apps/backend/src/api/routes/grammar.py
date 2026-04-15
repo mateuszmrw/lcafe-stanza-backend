@@ -1,5 +1,6 @@
 import logging
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +9,7 @@ from src.api.dependencies import get_current_user, get_db, get_redis
 from src.api.schemas.grammar import GrammarExplainRequest, GrammarExplainResponse
 from src.core.config import get_settings
 from src.domain.grammar.service import GrammarExplanationService
-from src.infrastructure.db.models.users import User
+from src.infrastructure.db.models.users import User, UserLanguageProfile
 from src.infrastructure.db.repositories.provider_repo import ProviderRepository
 from src.infrastructure.db.repositories.system_api_key_repo import SystemApiKeyRepository
 from src.infrastructure.llm.claude_client import ClaudeClient
@@ -91,7 +92,17 @@ async def explain_grammar(
     if not body.tokens:
         raise HTTPException(status_code=422, detail="tokens must not be empty")
 
-    if not current_user.proficiency_level:
+    lang_profile = None
+    if current_user.active_language_id is not None:
+        result = await session.execute(
+            sa.select(UserLanguageProfile).where(
+                UserLanguageProfile.user_id == current_user.id,
+                UserLanguageProfile.language_id == current_user.active_language_id,
+            )
+        )
+        lang_profile = result.scalar_one_or_none()
+
+    if not lang_profile or not lang_profile.proficiency_level:
         raise HTTPException(
             status_code=400,
             detail="Please set your proficiency level first (PATCH /users/me/proficiency).",
@@ -106,7 +117,7 @@ async def explain_grammar(
         return await service.explain(
             tokens=body.tokens,
             language_code=body.language_code,
-            proficiency_level=current_user.proficiency_level,
+            proficiency_level=lang_profile.proficiency_level,
             native_language_code=current_user.native_language_code or "en",
             register=body.register,
         )

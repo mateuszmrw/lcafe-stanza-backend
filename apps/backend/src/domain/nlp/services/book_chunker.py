@@ -39,6 +39,7 @@ class BookChunker:
                         chapter_number=chapter_number,
                         chapter_page_number=chapter_page_number,
                         chapter_name=chapter.chapter_name or None,
+                        xhtml_file=chapter.xhtml_file,
                     )
                 )
                 chapter_page_number += 1

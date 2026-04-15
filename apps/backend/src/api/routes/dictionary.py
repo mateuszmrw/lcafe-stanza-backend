@@ -67,10 +67,14 @@ async def lookup_word(
         adapter = adapter_cls(session)
         entries = await adapter.lookup(word, source_lang, target_lang)
 
-        # Enrich entries with frequency data (all entries share the same lemma/lang)
+        # Enrich entries with frequency data.
+        # Try lemma first (e.g. "купить"), fall back to the searched surface form
+        # (e.g. "купил") since frequency CSVs often list surface forms.
         freq_row = None
         if entries:
             freq_row = await _freq_repo.lookup(session, source_lang, entries[0].lemma)
+            if freq_row is None and entries[0].lemma != word.lower():
+                freq_row = await _freq_repo.lookup(session, source_lang, word.lower())
         freq_info = (
             FrequencyInfo(rank=freq_row.rank, tier=_rank_to_tier(freq_row.rank))
             if freq_row

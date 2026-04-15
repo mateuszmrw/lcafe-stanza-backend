@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Trash2 } from "lucide-react"
-import { listVocabulary, updateWordStatus, bulkUpdateStatus, type WordResponse } from "@/src/lib/api/vocabulary"
+import { Download, Trash2, RefreshCw, Search, X } from "lucide-react"
+import { listVocabulary, updateWordStatus, bulkUpdateStatus, downloadVocabularyCSV, type WordResponse } from "@/src/lib/api/vocabulary"
+import { syncToAnki, getAnkiStatus } from "@/src/lib/api/anki"
 import { listPhrases, updatePhraseStatus, deletePhrase, type PhraseResponse } from "@/src/lib/api/phrases"
 import { listLanguages } from "@/src/lib/api/languages"
 import { useAuth } from "@/src/stores/auth"
@@ -55,14 +56,37 @@ function WordsTab({ languageId }: { languageId: number }) {
   const [posFilter, setPosFilter] = useState("")
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [searchInput, setSearchInput] = useState("")
+  const [searchTerm, setSearchTerm] = useState("")
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const queryClient = useQueryClient()
 
   // Reset selection when filters change
-  useEffect(() => { setSelected(new Set()) }, [statusFilter, posFilter, page])
+  useEffect(() => { setSelected(new Set()) }, [statusFilter, posFilter, page, searchTerm])
+
+  // Debounce search input (300ms)
+  function handleSearchChange(value: string) {
+    setSearchInput(value)
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(() => {
+      setSearchTerm(value)
+      setPage(1)
+    }, 300)
+  }
+
+  function clearFilters() {
+    setSearchInput("")
+    setSearchTerm("")
+    setStatusFilter(undefined)
+    setPosFilter("")
+    setPage(1)
+  }
+
+  const hasFilters = !!searchTerm || !!statusFilter || !!posFilter
 
   const { data, isLoading } = useQuery({
-    queryKey: ["vocabulary", languageId, statusFilter, posFilter, page],
-    queryFn: () => listVocabulary(languageId, statusFilter, page, 50, posFilter || undefined),
+    queryKey: ["vocabulary", languageId, statusFilter, posFilter, page, searchTerm],
+    queryFn: () => listVocabulary(languageId, statusFilter, page, 50, posFilter || undefined, searchTerm || undefined),
     enabled: languageId != null,
   })
 
@@ -116,6 +140,36 @@ function WordsTab({ languageId }: { languageId: number }) {
 
   return (
     <>
+      {/* Search row */}
+      <div className="mb-4 flex items-center gap-2">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500 pointer-events-none" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="Search words…"
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 pl-8 pr-8 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {searchInput && (
+            <button
+              onClick={() => handleSearchChange("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-zinc-500 hover:text-zinc-300"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        {hasFilters && (
+          <button
+            onClick={clearFilters}
+            className="text-xs text-zinc-500 hover:text-zinc-300 transition"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
       {/* Filters row */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="flex gap-1 border-b border-zinc-800 pb-0">
@@ -414,11 +468,20 @@ export default function VocabularyPage() {
   const { activeLanguage } = useAuth()
   const [languageId, setLanguageId] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<"words" | "phrases">("words")
+  const [ankiMessage, setAnkiMessage] = useState<string | null>(null)
+  const [ankiSyncing, setAnkiSyncing] = useState(false)
 
   const { data: languages } = useQuery({
     queryKey: ["languages"],
     queryFn: listLanguages,
     staleTime: Infinity,
+  })
+
+  const { data: ankiStatus, refetch: refetchAnkiStatus } = useQuery({
+    queryKey: ["anki-status", languageId],
+    queryFn: () => getAnkiStatus(languageId!),
+    enabled: languageId !== null,
+    staleTime: 30_000,
   })
 
   useEffect(() => {
@@ -430,21 +493,74 @@ export default function VocabularyPage() {
     }
   }, [activeLanguage, languages, languageId])
 
+  async function handleAnkiSync() {
+    if (languageId === null) return
+    setAnkiSyncing(true)
+    setAnkiMessage(null)
+    try {
+      const result = await syncToAnki(languageId)
+      if (result.synced > 0) {
+        setAnkiMessage(`Synced ${result.synced} cards to Anki`)
+      } else if (result.queued > 0) {
+        setAnkiMessage(`AnkiConnect unreachable — ${result.queued} cards queued`)
+      } else {
+        setAnkiMessage("Nothing to sync")
+      }
+      refetchAnkiStatus()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Sync failed"
+      setAnkiMessage(msg)
+    } finally {
+      setAnkiSyncing(false)
+    }
+  }
+
   return (
     <div className="p-8">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-zinc-100">Vocabulary</h1>
-        <select
-          value={languageId ?? ""}
-          onChange={(e) => setLanguageId(Number(e.target.value))}
-          className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          {(languages ?? []).map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.flag_emoji ? `${l.flag_emoji} ` : ""}{l.name}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-3">
+          {languageId !== null && (
+            <>
+              {ankiMessage && (
+                <span className="text-xs text-zinc-400">{ankiMessage}</span>
+              )}
+              <button
+                onClick={handleAnkiSync}
+                disabled={ankiSyncing}
+                className="relative flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 transition hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-50"
+                title="Sync learning words to Anki"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${ankiSyncing ? "animate-spin" : ""}`} />
+                Sync Anki
+                {ankiStatus && ankiStatus.pending_total > 0 && (
+                  <span className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-black">
+                    {ankiStatus.pending_total > 9 ? "9+" : ankiStatus.pending_total}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => downloadVocabularyCSV(languageId, `vocabulary-${languageId}.csv`)}
+                className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 transition hover:bg-zinc-700 hover:text-zinc-100"
+                title="Download vocabulary as CSV"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export CSV
+              </button>
+            </>
+          )}
+          <select
+            value={languageId ?? ""}
+            onChange={(e) => setLanguageId(Number(e.target.value))}
+            className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {(languages ?? []).map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.flag_emoji ? `${l.flag_emoji} ` : ""}{l.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Top-level tab: Words / Phrases */}

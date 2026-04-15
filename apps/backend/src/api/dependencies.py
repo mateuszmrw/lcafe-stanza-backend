@@ -94,6 +94,14 @@ async def get_current_user(
     user = await session.get(User, user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
+
+    # Single-session enforcement: token must carry the current version.
+    # Tokens issued before the migration have no "ver" claim → treated as 0,
+    # which matches the default column value, so existing sessions are grandfathered.
+    token_ver = payload.get("ver", 0)
+    if token_ver != user.token_version:
+        raise HTTPException(status_code=401, detail="Session invalidated — please log in again")
+
     return user
 
 

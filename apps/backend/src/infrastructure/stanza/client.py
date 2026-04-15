@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 from dataclasses import dataclass, field
 from typing import Any  # noqa: F401
@@ -66,6 +67,30 @@ class StanzaClient:
     # These are always pre-loaded regardless of the `languages` env var.
     DEFAULT_LANGUAGES: list[str] = ["english", "russian", "polish", "ko", "zh-hans"]
 
+    # Stanza stores models under the ISO code, not the full language name
+    _LANG_CODE_MAP: dict[str, str] = {
+        "english": "en",
+        "russian": "ru",
+        "polish": "pl",
+        "ko": "ko",
+        "zh-hans": "zh-hans",
+    }
+
+    def _is_language_installed(self, language: str) -> bool:
+        """Return True if all processor model files exist for this language."""
+        lang_code = self._LANG_CODE_MAP.get(language, language)
+        processors = self.model_configs[language].processors
+        lang_dir = os.path.join(self.config.model_dir, lang_code)
+        if not os.path.isdir(lang_dir):
+            return False
+        for proc in processors:
+            proc_dir = os.path.join(lang_dir, proc)
+            if not os.path.isdir(proc_dir):
+                return False
+            if not any(f.endswith(".pt") for f in os.listdir(proc_dir)):
+                return False
+        return True
+
     def download_languages(self):
         # Merge defaults with any extra languages from config (deduped, order preserved).
         to_load = list(self.DEFAULT_LANGUAGES)
@@ -80,8 +105,11 @@ class StanzaClient:
         if language not in self.model_configs:
             raise ValueError(f"Language {language} not supported")
         processor = self.model_configs[language].processors
-        logger.info(f"Downloading language: {language} with processors: {processor}")
-        stanza.download(language, model_dir=self.config.model_dir, processors=processor)
+        if self._is_language_installed(language):
+            logger.info(f"Language {language} already installed, skipping download")
+        else:
+            logger.info(f"Downloading language: {language} with processors: {processor}")
+            stanza.download(language, model_dir=self.config.model_dir, processors=processor)
         self.installed_languages.append(language)
         self.load_pipeline(language)
         if language not in self._pipeline_locks:

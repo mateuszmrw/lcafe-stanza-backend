@@ -27,7 +27,7 @@ async def register(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
-    access_token = create_access_token(str(user.id))
+    access_token = create_access_token(str(user.id), additional_claims={"ver": user.token_version})
     refresh_token = create_refresh_token(str(user.id))
 
     refresh_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
@@ -48,7 +48,11 @@ async def login(
     if not user.is_active:
         raise HTTPException(status_code=401, detail="Account deactivated")
 
-    access_token = create_access_token(str(user.id))
+    # Bump the token version to invalidate all existing sessions on other devices
+    user.token_version = (user.token_version or 0) + 1
+    await session.flush()
+
+    access_token = create_access_token(str(user.id), additional_claims={"ver": user.token_version})
     refresh_token = create_refresh_token(str(user.id))
 
     refresh_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
@@ -82,7 +86,7 @@ async def refresh(
     if user.refresh_token_hash != token_hash:
         raise HTTPException(status_code=401, detail="Refresh token mismatch")
 
-    access_token = create_access_token(str(user.id))
+    access_token = create_access_token(str(user.id), additional_claims={"ver": user.token_version})
     new_refresh = create_refresh_token(str(user.id))
 
     new_hash = hashlib.sha256(new_refresh.encode()).hexdigest()

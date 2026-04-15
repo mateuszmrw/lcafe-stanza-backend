@@ -79,21 +79,20 @@ async def upload_frequencies(
             continue
 
         lemma = parts[0].strip().lower()
-        if not lemma or lemma in ("lemma", "word"):  # skip header row
+        if not lemma:
             continue
 
-        # The file is sorted most-common-first; use row position as rank.
-        # Column 2 (if present) may be a raw count or a sequential rank —
-        # we store it as per_million for reference but always derive rank
-        # from insertion order so tiers stay meaningful.
-        auto_rank += 1
-
+        # Parse the numeric column before accepting the row.
+        # If it's not a valid number this is a header row (e.g. "word,count") — skip it.
         per_million: float | None = None
         if len(parts) >= 2:
             try:
                 per_million = float(parts[1].strip())
             except ValueError:
-                pass
+                continue  # non-numeric second column → header row
+
+        # The file is sorted most-common-first; use row position as rank.
+        auto_rank += 1
 
         batch.append({
             "id": uuid.uuid4(),

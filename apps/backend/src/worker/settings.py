@@ -4,7 +4,15 @@ from arq.connections import RedisSettings
 
 from src.core.config import get_settings
 from src.infrastructure.stanza.client import StanzaConfig, get_stanza_client
+from src.worker.tasks.align_smil_audio import align_smil_audio
+from src.worker.tasks.generate_tts_audio import generate_tts_audio
 from src.worker.tasks.tokenize_page import tokenize_page
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +35,10 @@ async def shutdown(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [tokenize_page]
+    functions = [tokenize_page, align_smil_audio, generate_tts_audio]
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 4
-    job_timeout = 300  # 5 min per page (generous for slow CPU)
+    job_timeout = 600  # 10 min — SMIL alignment is fast (parsing only)
     retry_jobs = False
     redis_settings = RedisSettings.from_dsn(_settings.redis_url)

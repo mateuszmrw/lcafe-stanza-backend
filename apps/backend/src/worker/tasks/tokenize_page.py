@@ -6,10 +6,10 @@ import sqlalchemy as sa
 from redis.asyncio import Redis
 
 from src.infrastructure.db.engine import AsyncSessionFactory
-from src.infrastructure.db.models.content import ContentItem, ContentPage
+from src.infrastructure.db.models.content import Book, ContentItem, ContentPage
 from src.infrastructure.db.models.languages import LanguageNlpConfig
 from src.infrastructure.db.models.providers import Provider
-from src.infrastructure.db.models.users import User
+from src.infrastructure.db.models.users import User, UserLanguageProfile
 from src.infrastructure.db.repositories.word_repo import WordRepository
 from src.infrastructure.stanza.client import StanzaClient
 from src.worker.events import publish_import_event
@@ -61,7 +61,20 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
 
         # Load user settings for vocabulary insertion behaviour.
         user = await session.get(User, content_item.user_id)
-        auto_ignore_propn: bool = getattr(user, "auto_ignore_proper_nouns", False) if user else False
+        # Check per-language profile first, fall back to global user setting
+        lang_profile_result = await session.execute(
+            sa.select(UserLanguageProfile).where(
+                UserLanguageProfile.user_id == content_item.user_id,
+                UserLanguageProfile.language_id == content_item.language_id,
+            )
+        )
+        lang_profile = lang_profile_result.scalar_one_or_none()
+        global_auto_ignore = getattr(user, "auto_ignore_proper_nouns", True) if user else True
+        auto_ignore_propn: bool = (
+            lang_profile.auto_ignore_proper_nouns
+            if lang_profile and lang_profile.auto_ignore_proper_nouns is not None
+            else global_auto_ignore
+        )
 
         # Tokenize in a background thread — Stanza is CPU-bound and not async-friendly.
         token_dicts: list[dict] = await asyncio.to_thread(
@@ -89,8 +102,7 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
                     "dep_head": t.get("dep_head", 0),
                     "dep_rel": t.get("dep_rel", ""),
                 }
-                if auto_ignore_propn and t.get("pos") == "PROPN":
-                    row["status"] = "ignored"
+                row["status"] = "ignored" if auto_ignore_propn and t.get("pos") == "PROPN" else "new"
                 word_rows.append(row)
 
         await _word_repo.bulk_upsert(
@@ -143,11 +155,16 @@ async def _finalize(redis: Redis, content_item_id: uuid.UUID, page_count: int) -
     token_count_raw = await redis.get(_TOKEN_COUNT_KEY.format(cid=content_item_id))
     total_token_count = int(token_count_raw) if token_count_raw else 0
 
+    has_audio_overlay = False
     async with AsyncSessionFactory() as session:
         content_item = await session.get(ContentItem, content_item_id)
         if content_item is None:
             logger.error("ContentItem %s not found during finalization", content_item_id)
             return
+
+        book = await session.get(Book, content_item_id)
+        if book:
+            has_audio_overlay = bool(book.has_audio_overlay)
 
         content_item.status = "completed"
         content_item.word_count = total_token_count
@@ -165,3 +182,8 @@ async def _finalize(redis: Redis, content_item_id: uuid.UUID, page_count: int) -
         page_count,
         total_token_count,
     )
+
+    if has_audio_overlay:
+        # redis is ArqRedis in workers — enqueue SMIL alignment now that all pages are ready
+        await redis.enqueue_job("align_smil_audio", str(content_item_id))  # type: ignore[attr-defined]
+        logger.info("Enqueued align_smil_audio for book %s", content_item_id)

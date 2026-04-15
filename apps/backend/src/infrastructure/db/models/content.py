@@ -30,6 +30,7 @@ class ContentItem(Base):
         sa.Text, nullable=False, server_default=sa.text("'pending'")
     )
     error_message: Mapped[Optional[str]] = mapped_column(sa.Text)
+    register: Mapped[Optional[str]] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
     )
@@ -49,6 +50,20 @@ class Book(Base):
     file_hash: Mapped[str] = mapped_column(sa.Text, nullable=False)
     file_path: Mapped[str] = mapped_column(sa.Text, nullable=False)
     chapter_count: Mapped[Optional[int]] = mapped_column(sa.Integer)
+    audio_file_path: Mapped[Optional[str]] = mapped_column(sa.Text)
+    audio_duration_ms: Mapped[Optional[int]] = mapped_column(sa.Integer)
+    alignment_status: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default=sa.text("'none'")
+    )
+    has_audio_overlay: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    audio_overlay_status: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default=sa.text("'none'")
+    )
+    tts_status: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default=sa.text("'none'")
+    )
 
 
 class ContentPage(Base):
@@ -66,6 +81,8 @@ class ContentPage(Base):
     chapter_number: Mapped[Optional[int]] = mapped_column(sa.Integer)
     chapter_name: Mapped[Optional[str]] = mapped_column(sa.Text)
     chapter_page_number: Mapped[Optional[int]] = mapped_column(sa.Integer)
+    xhtml_file: Mapped[Optional[str]] = mapped_column(sa.Text)
+    tts_manifest_path: Mapped[Optional[str]] = mapped_column(sa.Text)
     text: Mapped[str] = mapped_column(sa.Text, nullable=False)
     status: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("'pending'")

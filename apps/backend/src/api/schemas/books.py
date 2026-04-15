@@ -17,6 +17,7 @@ class TokenWithStatus(BaseModel):
     f: str = ""   # morphological features, e.g. "Gender=Masc|Number=Sing|Case=Nom"
     dep_head: int = 0   # 1-based head token index within sentence (0 = root)
     dep_rel: str = ""   # Universal Dependency relation label, e.g. "nsubj", "obj"
+    hint: Optional[str] = None
     status: str = "new"
 
 
@@ -48,6 +49,7 @@ class BookDetailResponse(BaseModel):
     id: uuid.UUID
     title: str
     description: Optional[str]
+    register: Optional[str] = None
     status: str
     word_count: Optional[int]
     page_count: Optional[int]
@@ -55,6 +57,11 @@ class BookDetailResponse(BaseModel):
     language_code: str
     chapter_count: Optional[int]
     created_at: datetime
+    has_audio: bool = False
+    audio_duration_ms: Optional[int] = None
+    has_audio_overlay: bool = False
+    audio_overlay_status: str = "none"
+    tts_status: str = "none"
 
 
 class PageResponse(BaseModel):

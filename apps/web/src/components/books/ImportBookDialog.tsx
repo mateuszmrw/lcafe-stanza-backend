@@ -20,6 +20,7 @@ export function ImportBookDialog({ open, onClose }: ImportBookDialogProps) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [title, setTitle] = useState("")
+  const [register, setRegister] = useState<string>("")
   const [error, setError] = useState("")
   const { activeLanguage } = useAuth()
 
@@ -27,7 +28,7 @@ export function ImportBookDialog({ open, onClose }: ImportBookDialogProps) {
     mutationFn: () => {
       if (!file) throw new Error("No file selected")
       if (!activeLanguage) throw new Error("No active language set")
-      return uploadBook(file, activeLanguage.id, title.trim() || file.name.replace(/\.epub$/i, ""))
+      return uploadBook(file, activeLanguage.id, title.trim() || file.name.replace(/\.epub$/i, ""), register || null)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["books"] })
@@ -45,6 +46,7 @@ export function ImportBookDialog({ open, onClose }: ImportBookDialogProps) {
   function handleClose() {
     setFile(null)
     setTitle("")
+    setRegister("")
     setError("")
     mutation.reset()
     onClose()
@@ -110,6 +112,24 @@ export function ImportBookDialog({ open, onClose }: ImportBookDialogProps) {
               <p className="rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-400">
                 {activeLanguage.name}
               </p>
+            </div>
+
+            {/* Register */}
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
+                Register <span className="text-zinc-500 font-normal">(optional)</span>
+              </label>
+              <select
+                value={register}
+                onChange={(e) => setRegister(e.target.value)}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Unspecified</option>
+                <option value="formal">Formal</option>
+                <option value="literary">Literary</option>
+                <option value="informal">Informal</option>
+                <option value="technical">Technical</option>
+              </select>
             </div>
           </>
         )}

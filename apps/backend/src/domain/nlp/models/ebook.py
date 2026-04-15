@@ -13,3 +13,4 @@ class ChunkedText(BaseModel):
     chapter_number: int
     chapter_page_number: int
     chapter_name: str | None = None
+    xhtml_file: str | None = None

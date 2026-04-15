@@ -26,10 +26,12 @@ class User(Base):
     active_language_id: Mapped[Optional[int]] = mapped_column(
         sa.Integer, sa.ForeignKey("languages.id", ondelete="SET NULL"), nullable=True
     )
-    proficiency_level: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     native_language_code: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     auto_ignore_proper_nouns: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, server_default=sa.text("false")
+        sa.Boolean, nullable=False, server_default=sa.text("true")
+    )
+    token_version: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("0")
     )
     refresh_token_hash: Mapped[Optional[str]] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -38,3 +40,24 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
     )
+
+
+class UserLanguageProfile(Base):
+    __tablename__ = "user_language_profiles"
+
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    language_id: Mapped[int] = mapped_column(
+        sa.Integer,
+        sa.ForeignKey("languages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    proficiency_level: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    native_language_code: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    auto_ignore_proper_nouns: Mapped[Optional[bool]] = mapped_column(sa.Boolean, nullable=True)
+
+    __table_args__ = (sa.UniqueConstraint("user_id", "language_id"),)

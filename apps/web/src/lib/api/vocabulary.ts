@@ -1,3 +1,5 @@
+import { env } from "@/src/env"
+import { getAuthStore } from "@/src/stores/auth"
 import { apiClient } from "./client"
 
 export interface WordResponse {
@@ -25,11 +27,13 @@ export async function listVocabulary(
   status?: string,
   page = 1,
   limit = 50,
-  pos?: string
+  pos?: string,
+  search?: string,
 ): Promise<WordListResponse> {
   const params = new URLSearchParams({ language_id: String(languageId), page: String(page), limit: String(limit) })
   if (status) params.set("status", status)
   if (pos) params.set("pos", pos)
+  if (search) params.set("search", search)
   return apiClient(`/vocabulary?${params}`)
 }
 
@@ -59,12 +63,30 @@ export async function upsertWordStatus(data: {
   reading?: string
   gender?: string
   feats?: string
+  hint?: string | null
+  sentence_context?: string | null
 }): Promise<WordResponse> {
   return apiClient("/vocabulary", {
     method: "PUT",
     body: JSON.stringify(data),
   })
 }
+
+export async function downloadVocabularyCSV(languageId: number, filename = "vocabulary.csv"): Promise<void> {
+  const { accessToken } = getAuthStore()
+  const res = await fetch(`${env.apiUrl}/vocabulary/export?language_id=${languageId}`, {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+  })
+  if (!res.ok) throw new Error("Export failed")
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 
 export async function batchUpsertWordStatus(
   items: Array<{

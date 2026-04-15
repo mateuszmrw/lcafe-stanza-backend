@@ -17,7 +17,8 @@ import { Loader2 } from "lucide-react"
 import { useAuth } from "@/src/stores/auth"
 import { listLanguages } from "@/src/lib/api/languages"
 import { getStats } from "@/src/lib/api/stats"
-import { useState, useEffect } from "react"
+import { getCalendar, type CalendarEntry } from "@/src/lib/api/activity"
+import { useState, useEffect, useRef } from "react"
 
 const STATUS_COLORS: Record<string, string> = {
   new: "#3b82f6",
@@ -33,6 +34,114 @@ const STATUS_LABELS: Record<string, string> = {
   known: "Known",
   well_known: "Well known",
   ignored: "Ignored",
+}
+
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+function cellColor(pages: number): string {
+  if (pages === 0) return "bg-zinc-800"
+  if (pages < 5) return "bg-blue-900"
+  if (pages < 10) return "bg-blue-600"
+  return "bg-blue-400"
+}
+
+function ReadingHeatmap({ entries }: { entries: CalendarEntry[] }) {
+  const [tooltip, setTooltip] = useState<{ label: string; x: number; y: number } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const pageMap = new Map(entries.map((e) => [e.date, e.pages]))
+
+  // Build 53 weeks ending today, each week starts Monday
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const dayOfWeek = today.getDay() // 0=Sun
+  const offsetToMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+  // Last day in grid is the Sunday of current week
+  const gridEnd = new Date(today)
+  gridEnd.setDate(gridEnd.getDate() + (6 - offsetToMon))
+  // Grid starts 52 weeks before the Monday of current week
+  const gridStart = new Date(gridEnd)
+  gridStart.setDate(gridStart.getDate() - 52 * 7 + 1)
+
+  const weeks: Array<Array<{ date: string; pages: number; future: boolean }>> = []
+  const cursor = new Date(gridStart)
+  while (cursor <= gridEnd) {
+    const week: Array<{ date: string; pages: number; future: boolean }> = []
+    for (let d = 0; d < 7; d++) {
+      const iso = cursor.toISOString().slice(0, 10)
+      week.push({ date: iso, pages: pageMap.get(iso) ?? 0, future: cursor > today })
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    weeks.push(week)
+  }
+
+  // Month label: show month name at the first week that starts in a new month
+  function monthLabel(wi: number): string {
+    const cell = weeks[wi]?.[0]
+    if (!cell) return ""
+    const d = new Date(cell.date + "T00:00:00")
+    if (d.getDate() <= 7) {
+      return d.toLocaleString("en", { month: "short" })
+    }
+    return ""
+  }
+
+  return (
+    <div ref={containerRef} className="relative overflow-x-auto">
+      <div className="flex gap-0.5 min-w-max">
+        {/* Day-of-week labels */}
+        <div className="flex flex-col gap-0.5 mr-1">
+          <div className="h-4" />
+          {DAY_LABELS.map((d, i) => (
+            <div key={d} className={`h-3 text-[9px] leading-3 text-zinc-600 flex items-center ${i % 2 !== 0 ? "invisible" : ""}`}>
+              {d}
+            </div>
+          ))}
+        </div>
+
+        {/* Weeks */}
+        {weeks.map((week, wi) => (
+          <div key={wi} className="flex flex-col gap-0.5">
+            <div className="h-4 text-[9px] text-zinc-500 leading-4">{monthLabel(wi)}</div>
+            {week.map((cell, di) => (
+              <div
+                key={di}
+                className={`h-3 w-3 rounded-sm ${cell.future ? "opacity-0" : cellColor(cell.pages)}`}
+                onMouseEnter={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const d = new Date(cell.date + "T00:00:00")
+                  const label = cell.pages > 0
+                    ? `${cell.pages} page${cell.pages === 1 ? "" : "s"} · ${d.toLocaleDateString("en", { month: "short", day: "numeric" })}`
+                    : d.toLocaleDateString("en", { month: "short", day: "numeric" })
+                  setTooltip({ label, x: rect.left + rect.width / 2, y: rect.top })
+                }}
+                onMouseLeave={() => setTooltip(null)}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {/* Legend */}
+      <div className="mt-3 flex items-center gap-1.5 text-xs text-zinc-500">
+        <span>Less</span>
+        {[0, 1, 5, 10].map((n) => (
+          <div key={n} className={`h-3 w-3 rounded-sm ${cellColor(n)}`} />
+        ))}
+        <span>More</span>
+      </div>
+
+      {/* Tooltip */}
+      {tooltip && (
+        <div
+          className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-full -mt-1 rounded bg-zinc-700 px-2 py-1 text-xs text-zinc-100 shadow-lg"
+          style={{ left: tooltip.x, top: tooltip.y - 6 }}
+        >
+          {tooltip.label}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -79,11 +188,19 @@ export default function StatsPage() {
   }, [activeLanguage, selectedLangCode])
 
   const langCode = selectedLangCode || activeLanguage?.code || ""
+  const selectedLang = languages?.find((l) => l.code === langCode)
 
   const { data: stats, isLoading, isError } = useQuery({
     queryKey: ["stats", langCode],
     queryFn: () => getStats(langCode),
     enabled: !!langCode,
+  })
+
+  const { data: calendarData } = useQuery({
+    queryKey: ["activity-calendar", selectedLang?.id],
+    queryFn: () => getCalendar(selectedLang!.id),
+    enabled: !!selectedLang?.id,
+    staleTime: 60_000,
   })
 
   const totalKnown =
@@ -134,6 +251,16 @@ export default function StatsPage() {
 
       {stats && (
         <>
+          {/* Reading heatmap */}
+          {calendarData !== undefined && (
+            <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
+              <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+                Reading activity
+              </h2>
+              <ReadingHeatmap entries={calendarData} />
+            </section>
+          )}
+
           {/* Counter cards */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatCard label="Total known" value={totalKnown.toLocaleString()} />

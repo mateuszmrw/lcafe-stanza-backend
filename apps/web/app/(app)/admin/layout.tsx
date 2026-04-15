@@ -14,6 +14,7 @@ const TABS = [
   { href: "/admin/system-keys", label: "System Keys" },
   { href: "/admin/llm", label: "LLM" },
   { href: "/admin/deepl-instances", label: "DeepL Instances" },
+  { href: "/admin/anki", label: "Anki" },
   { href: "/admin/users", label: "Users" },
   { href: "/admin/data", label: "Data" },
 ]

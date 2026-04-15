@@ -18,6 +18,7 @@ class ParsedDocumentItem(BaseModel):
     spine: int
     name: str
     type: int
+    xhtml_file: str | None = None
 
 
 class BookParser:
@@ -98,6 +99,7 @@ class BookParser:
             name=item.get_name(),
             type=item.get_type(),
             chapter_name=chapter_name,
+            xhtml_file=item.get_name(),
         )
 
     def parse_navigation_items(self, item) -> List[ParsedNavigationItem]:
@@ -145,3 +147,8 @@ class BookParser:
     def parse(self) -> list[ParsedDocumentItem]:
         book = self.read_epub_file()
         return self.get_sorted_pages(book)
+
+    def detect_smil_overlays(self) -> bool:
+        """Return True if this EPUB contains SMIL audio overlay files."""
+        book = self.read_epub_file()
+        return any(True for _ in book.get_items_of_media_type("application/smil+xml"))

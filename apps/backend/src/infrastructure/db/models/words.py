@@ -49,9 +49,13 @@ class Word(Base):
         sa.Text, nullable=False, server_default=sa.text("'new'")
     )
     hint: Mapped[Optional[str]] = mapped_column(sa.Text)
+    sentence_context: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     tags: Mapped[Optional[list[str]]] = mapped_column(ARRAY(sa.Text))
     lookup_count: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, server_default=sa.text("0")
+    )
+    anki_pending: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
     )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")

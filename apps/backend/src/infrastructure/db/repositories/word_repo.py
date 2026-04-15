@@ -45,7 +45,7 @@ class WordRepository:
         if not words:
             return {}
         result = await session.execute(
-            sa.select(Word.id, Word.word, Word.lemma, Word.pos, Word.reading, Word.gender, Word.feats, Word.dep_head, Word.dep_rel, Word.status).where(
+            sa.select(Word.id, Word.word, Word.lemma, Word.pos, Word.reading, Word.gender, Word.feats, Word.dep_head, Word.dep_rel, Word.hint, Word.status).where(
                 Word.user_id == user_id,
                 Word.language_id == language_id,
                 Word.word.in_(words),
@@ -61,10 +61,25 @@ class WordRepository:
                 "feats": row.feats,
                 "dep_head": row.dep_head,
                 "dep_rel": row.dep_rel,
+                "hint": row.hint,
                 "status": row.status,
             }
             for row in result
         }
+
+    async def list_all(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        language_id: int,
+    ) -> list[Word]:
+        """Return all words for a user+language (for CSV export)."""
+        result = await session.execute(
+            sa.select(Word)
+            .where(Word.user_id == user_id, Word.language_id == language_id)
+            .order_by(Word.created_at.desc())
+        )
+        return list(result.scalars().all())
 
     async def list_paginated(
         self,
@@ -75,6 +90,7 @@ class WordRepository:
         pos: str | None = None,
         page: int = 1,
         limit: int = 50,
+        search: str | None = None,
     ) -> tuple[list[Word], int]:
         query = (
             sa.select(Word)
@@ -85,6 +101,8 @@ class WordRepository:
             query = query.where(Word.status == status)
         if pos:
             query = query.where(Word.pos == pos)
+        if search:
+            query = query.where(Word.word.ilike(f"%{search}%"))
 
         total_result = await session.execute(
             sa.select(sa.func.count()).select_from(query.subquery())
@@ -169,24 +187,38 @@ class WordRepository:
         reading: str = "",
         gender: str = "",
         feats: str = "",
+        hint: str | None = None,
+        sentence_context: str | None = None,
     ) -> Word:
-        """Insert word if new, update status on conflict. Returns the word row."""
+        """Insert word if new, update status (and hint when provided) on conflict. Returns the word row."""
+        values: dict = dict(
+            user_id=user_id,
+            language_id=language_id,
+            word=word.lower().strip(),
+            lemma=lemma,
+            pos=pos,
+            reading=reading,
+            gender=gender,
+            feats=feats,
+            status=status,
+        )
+        if hint is not None:
+            values["hint"] = hint
+        if sentence_context is not None:
+            values["sentence_context"] = sentence_context
+
+        on_conflict_set: dict = {"status": status}
+        if hint is not None:
+            on_conflict_set["hint"] = hint
+        if sentence_context is not None:
+            on_conflict_set["sentence_context"] = sentence_context
+
         stmt = (
             pg_insert(Word)
-            .values(
-                user_id=user_id,
-                language_id=language_id,
-                word=word.lower().strip(),
-                lemma=lemma,
-                pos=pos,
-                reading=reading,
-                gender=gender,
-                feats=feats,
-                status=status,
-            )
+            .values(**values)
             .on_conflict_do_update(
                 index_elements=["user_id", "language_id", "word"],
-                set_={"status": status},
+                set_=on_conflict_set,
             )
             .returning(Word)
         )

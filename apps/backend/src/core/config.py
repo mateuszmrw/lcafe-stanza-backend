@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     admin_email: Optional[str] = None
     admin_password: Optional[str] = None
 
+    # TTS
+    qwen_tts_url: Optional[str] = None
+    qwen_tts_api_key: Optional[str] = None
+
     @property
     def database_url(self) -> str:
         return (

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Trash2, AlertTriangle } from "lucide-react"
 import { resetAllData } from "@/src/lib/api/admin-data"
 
@@ -9,10 +9,16 @@ const REQUIRED_PHRASE = "DELETE ALL DATA"
 
 export default function DataPage() {
   const [input, setInput] = useState("")
+  const queryClient = useQueryClient()
 
   const { mutate, isPending, isSuccess, data, error } = useMutation({
     mutationFn: () => resetAllData(input),
-    onSuccess: () => setInput(""),
+    onSuccess: () => {
+      setInput("")
+      queryClient.removeQueries({ queryKey: ["stats"] })
+      queryClient.removeQueries({ queryKey: ["vocabulary"] })
+      queryClient.removeQueries({ queryKey: ["books"] })
+    },
   })
 
   const confirmed = input === REQUIRED_PHRASE

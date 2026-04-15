@@ -14,6 +14,12 @@ export interface BookDetail extends BookListItem {
   chapter_count: number | null
   page_count: number | null
   language_code: string
+  register: string | null
+  has_audio: boolean
+  audio_duration_ms: number | null
+  has_audio_overlay: boolean
+  audio_overlay_status: string
+  tts_status: "none" | "pending" | "in_progress" | "complete" | "failed"
 }
 
 export interface TokenWithStatus {
@@ -28,6 +34,7 @@ export interface TokenWithStatus {
   f: string   // morphological features, e.g. "Gender=Masc|Number=Sing|Case=Nom"
   dep_head?: number  // 1-based head token index within sentence (0 = root)
   dep_rel?: string   // Universal Dependency relation label, e.g. "nsubj", "obj"
+  hint?: string | null
   status: "new" | "learning" | "known" | "ignored" | "well_known"
 }
 
@@ -67,12 +74,14 @@ export async function getBook(id: string): Promise<BookDetail> {
 export async function uploadBook(
   file: File,
   languageId: number,
-  title: string
+  title: string,
+  register?: string | null
 ): Promise<BookUploadResponse> {
   const form = new FormData()
   form.append("file", file)
   form.append("language_id", String(languageId))
   form.append("title", title)
+  if (register) form.append("register", register)
   return apiUpload("/books", form)
 }
 

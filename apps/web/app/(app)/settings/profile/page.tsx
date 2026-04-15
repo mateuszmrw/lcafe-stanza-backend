@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Loader2, Check } from "lucide-react"
 import { getProfile, updateProfile, updateProficiency } from "@/src/lib/api/users"
+import { useAuth } from "@/src/stores/auth"
 
 const PROFICIENCY_LEVELS = [
   { value: "A1", label: "A1 — Beginner" },
@@ -37,6 +38,7 @@ const NATIVE_LANGUAGES = [
 
 export default function ProfilePage() {
   const queryClient = useQueryClient()
+  const { activeLanguage } = useAuth()
   const [usernameValue, setUsernameValue] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
@@ -44,7 +46,7 @@ export default function ProfilePage() {
   const [error, setError] = useState("")
   const [proficiencyLevel, setProficiencyLevel] = useState("")
   const [nativeLanguage, setNativeLanguage] = useState("")
-  const [autoIgnorePropn, setAutoIgnorePropn] = useState(false)
+  const [autoIgnorePropn, setAutoIgnorePropn] = useState(true)
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ["profile"],
@@ -52,11 +54,15 @@ export default function ProfilePage() {
   })
 
   useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ["profile"] })
+  }, [activeLanguage?.id, queryClient])
+
+  useEffect(() => {
     if (profile) {
       setUsernameValue(profile.username)
       setProficiencyLevel(profile.proficiency_level ?? "")
       setNativeLanguage(profile.native_language_code ?? "")
-      setAutoIgnorePropn(profile.auto_ignore_proper_nouns ?? false)
+      setAutoIgnorePropn(profile.auto_ignore_proper_nouns ?? true)
     }
   }, [profile])
 
@@ -172,8 +178,12 @@ export default function ProfilePage() {
       {/* Learning profile */}
       <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
         <h2 className="mb-1 text-sm font-semibold text-zinc-300 uppercase tracking-wide">Learning Profile</h2>
-        <p className="mb-4 text-xs text-zinc-500">Used for grammar explanations — sets the level and language of detail.</p>
-        <div className="space-y-3">
+        <p className="mb-4 text-xs text-zinc-500">
+          {profile?.active_language_name
+            ? <>Saved per language — currently editing <span className="text-zinc-300">{profile.active_language_name}</span>. Switch your active language to configure others.</>
+            : "Set an active language first to configure your learning profile."}
+        </p>
+        <fieldset disabled={!profile?.active_language_id} className="space-y-3 disabled:opacity-50">
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-400">Proficiency level</label>
             <select
@@ -224,7 +234,7 @@ export default function ProfilePage() {
             ) : null}
             Save
           </button>
-        </div>
+        </fieldset>
       </section>
 
       {/* Password */}

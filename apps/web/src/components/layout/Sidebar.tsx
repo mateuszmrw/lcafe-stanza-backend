@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { BarChart2, BookOpen, Library, LogOut, Settings, ShieldCheck, User } from "lucide-react"
+import { BarChart2, BookOpen, Library, LogOut, Settings, ShieldCheck, User, X } from "lucide-react"
 import { cn } from "@/src/lib/cn"
 import { useAuth } from "@/src/stores/auth"
 import { logout } from "@/src/lib/api/auth"
@@ -15,13 +15,18 @@ const NAV_LINKS = [
   { href: "/settings", label: "Settings", icon: Settings },
 ]
 
-export function Sidebar() {
+interface SidebarProps {
+  onClose?: () => void
+}
+
+export function Sidebar({ onClose }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const { user, clearTokens } = useAuth()
   const isAdmin = user?.is_admin ?? false
 
   async function handleLogout() {
+    onClose?.()
     try {
       await logout()
     } catch {
@@ -34,9 +39,19 @@ export function Sidebar() {
   return (
     <aside className="flex h-screen w-60 flex-col bg-zinc-900 text-zinc-100">
       {/* Logo */}
-      <div className="flex items-center gap-2 px-5 py-5 border-b border-zinc-800">
-        <BookOpen className="h-6 w-6 text-blue-400" />
-        <span className="text-lg font-semibold tracking-tight">Slovo</span>
+      <div className="flex items-center justify-between gap-2 px-5 py-5 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <BookOpen className="h-6 w-6 text-blue-400" />
+          <span className="text-lg font-semibold tracking-tight">Slovo</span>
+        </div>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       {/* Language switcher */}
@@ -51,8 +66,9 @@ export function Sidebar() {
             <li key={href}>
               <Link
                 href={href}
+                onClick={() => onClose?.()}
                 className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  "flex items-center gap-3 rounded-md px-3 py-3 text-sm font-medium transition-colors",
                   pathname.startsWith(href)
                     ? "bg-zinc-700 text-white"
                     : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
@@ -67,8 +83,9 @@ export function Sidebar() {
             <li>
               <Link
                 href="/admin"
+                onClick={() => onClose?.()}
                 className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  "flex items-center gap-3 rounded-md px-3 py-3 text-sm font-medium transition-colors",
                   pathname.startsWith("/admin")
                     ? "bg-zinc-700 text-white"
                     : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
@@ -97,7 +114,7 @@ export function Sidebar() {
         </div>
         <button
           onClick={handleLogout}
-          className="mt-1 flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+          className="mt-1 flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
         >
           <LogOut className="h-4 w-4" />
           Log out

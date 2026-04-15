@@ -16,7 +16,7 @@ class UserResponse(BaseModel):
     active_language_name: str | None = None
     proficiency_level: str | None = None
     native_language_code: str | None = None
-    auto_ignore_proper_nouns: bool = False
+    auto_ignore_proper_nouns: bool = True
 
     model_config = {"from_attributes": True}
 
