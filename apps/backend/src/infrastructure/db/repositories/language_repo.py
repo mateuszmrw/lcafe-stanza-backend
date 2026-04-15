@@ -69,6 +69,19 @@ class LanguageRepository:
         )
         return result.scalar_one_or_none()
 
+    async def update_reader_config(
+        self,
+        session: AsyncSession,
+        language_id: int,
+        reader_config: dict,
+    ) -> Language | None:
+        language = await self.find_by_id(session, language_id)
+        if not language:
+            return None
+        language.reader_config = reader_config
+        await session.flush()
+        return language
+
     async def set_nlp_config(
         self,
         session: AsyncSession,

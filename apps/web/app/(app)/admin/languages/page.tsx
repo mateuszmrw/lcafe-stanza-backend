@@ -9,8 +9,10 @@ import {
   updateAdminLanguage,
   getNlpConfig,
   setNlpConfig,
+  setReaderConfig,
   type LanguageAdminResponse,
 } from "@/src/lib/api/admin"
+import { READER_CONFIG_DEFAULTS, READER_CONFIG_LABELS, type ReaderConfig } from "@/src/lib/api/languages"
 import { cn } from "@/src/lib/cn"
 
 function NlpConfigModal({
@@ -130,9 +132,98 @@ function NlpConfigModal({
   )
 }
 
+function ReaderConfigModal({
+  lang,
+  onClose,
+}: {
+  lang: LanguageAdminResponse
+  onClose: () => void
+}) {
+  const queryClient = useQueryClient()
+  const merged: ReaderConfig = { ...READER_CONFIG_DEFAULTS, ...lang.reader_config }
+  const [cfg, setCfg] = useState<ReaderConfig>(merged)
+
+  const saveMutation = useMutation({
+    mutationFn: () => setReaderConfig(lang.id, cfg),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-languages"] })
+      onClose()
+    },
+  })
+
+  const toggle = (key: keyof ReaderConfig) =>
+    setCfg((prev) => ({ ...prev, [key]: !prev[key] }))
+
+  const fields = Object.keys(READER_CONFIG_LABELS) as (keyof ReaderConfig)[]
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold text-zinc-100">
+            Reader Panel — {lang.name}
+          </h3>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <p className="mb-4 text-xs text-zinc-500">
+          Choose which NLP fields are shown in the reader definition panel for this language.
+        </p>
+
+        <div className="space-y-3">
+          {fields.map((key) => (
+            <label key={key} className="flex items-center justify-between gap-3 cursor-pointer group">
+              <span className="text-sm text-zinc-300 group-hover:text-zinc-100 transition">
+                {READER_CONFIG_LABELS[key]}
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={cfg[key]}
+                onClick={() => toggle(key)}
+                className={cn(
+                  "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
+                  cfg[key] ? "bg-blue-600" : "bg-zinc-700"
+                )}
+              >
+                <span
+                  className={cn(
+                    "inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform",
+                    cfg[key] ? "translate-x-4.5" : "translate-x-0.5"
+                  )}
+                />
+              </button>
+            </label>
+          ))}
+        </div>
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-lg px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending}
+            className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function LanguageRow({ lang }: { lang: LanguageAdminResponse }) {
   const queryClient = useQueryClient()
   const [nlpOpen, setNlpOpen] = useState(false)
+  const [readerOpen, setReaderOpen] = useState(false)
 
   const toggleMutation = useMutation({
     mutationFn: (is_active: boolean) =>
@@ -169,16 +260,26 @@ function LanguageRow({ lang }: { lang: LanguageAdminResponse }) {
           </button>
         </td>
         <td className="py-3 px-4">
-          <button
-            onClick={() => setNlpOpen(true)}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 transition"
-          >
-            <Settings2 className="h-3.5 w-3.5" />
-            NLP
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setNlpOpen(true)}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 transition"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              NLP
+            </button>
+            <button
+              onClick={() => setReaderOpen(true)}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 transition"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              Reader
+            </button>
+          </div>
         </td>
       </tr>
       {nlpOpen && <NlpConfigModal lang={lang} onClose={() => setNlpOpen(false)} />}
+      {readerOpen && <ReaderConfigModal lang={lang} onClose={() => setReaderOpen(false)} />}
     </>
   )
 }

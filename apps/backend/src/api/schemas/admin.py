@@ -5,12 +5,24 @@ from typing import Optional
 from pydantic import BaseModel, field_validator
 
 
+class ReaderConfig(BaseModel):
+    """Controls which NLP fields are shown in the reader definition panel."""
+    show_reading: bool = True       # Furigana / pinyin — only useful for CJK
+    show_case: bool = True          # Case block (Genitive, Dative, …)
+    show_case_question: bool = False  # Mnemonic question (Кого? Чего?) inside case block
+    show_mood: bool = True          # Verb mood block (Indicative, Subjunctive, …)
+    show_dep_rel: bool = True       # Role in sentence (subject, object, …)
+    show_gender: bool = True        # Grammatical gender
+    show_feats: bool = True         # Remaining morphological feats (Animacy, Number, …)
+
+
 class LanguageResponse(BaseModel):
     id: int
     code: str
     name: str
     flag_emoji: Optional[str]
     is_active: bool
+    reader_config: dict = {}
 
     model_config = {"from_attributes": True}
 
@@ -25,6 +37,10 @@ class LanguageUpdateRequest(BaseModel):
     name: Optional[str] = None
     flag_emoji: Optional[str] = None
     is_active: Optional[bool] = None
+
+
+class ReaderConfigUpdateRequest(BaseModel):
+    reader_config: ReaderConfig
 
 
 class NlpConfigResponse(BaseModel):

@@ -8,6 +8,7 @@ from src.api.schemas.admin import (
     LanguageUpdateRequest,
     NlpConfigResponse,
     NlpConfigUpdateRequest,
+    ReaderConfigUpdateRequest,
 )
 from src.infrastructure.db.models.users import User
 from src.infrastructure.db.repositories.language_repo import LanguageRepository
@@ -82,3 +83,19 @@ async def set_nlp_config(
     )
     await session.commit()
     return NlpConfigResponse.model_validate(config)
+
+
+@router.put("/{language_id}/reader-config", response_model=LanguageResponse)
+async def set_reader_config(
+    language_id: int,
+    body: ReaderConfigUpdateRequest,
+    _: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_db),
+) -> LanguageResponse:
+    language = await _lang_repo.update_reader_config(
+        session, language_id, body.reader_config.model_dump()
+    )
+    if not language:
+        raise HTTPException(status_code=404, detail="Language not found")
+    await session.commit()
+    return LanguageResponse.model_validate(language)

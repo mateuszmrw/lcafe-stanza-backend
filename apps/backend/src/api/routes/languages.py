@@ -14,6 +14,7 @@ class LanguageItem(BaseModel):
     code: str
     name: str
     flag_emoji: str | None
+    reader_config: dict = {}
 
 
 @router.get("", response_model=list[LanguageItem])
@@ -27,6 +28,7 @@ async def list_languages(
             code=lang.code,
             name=lang.name,
             flag_emoji=lang.flag_emoji,
+            reader_config=lang.reader_config,
         )
         for lang in languages
         if lang.is_active

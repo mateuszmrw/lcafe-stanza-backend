@@ -14,6 +14,7 @@ import { useReaderStore } from "@/src/stores/reader"
 import { getLanguageLabel } from "@/src/lib/language-flags"
 import { cn } from "@/src/lib/cn"
 import { STATUSES } from "@/src/lib/status-colors"
+import { READER_CONFIG_DEFAULTS, type ReaderConfig } from "@/src/lib/api/languages"
 
 const MAX_SELECTION_CHARS = 500
 
@@ -262,7 +263,7 @@ function _sectionKey(tags: string[]): string {
   return [mood, tense].filter(Boolean).join("-") || "other"
 }
 
-function DeclensionTable({ forms }: { forms: WordForm[] }) {
+function DeclensionTable({ forms, activeCase }: { forms: WordForm[]; activeCase?: string }) {
   const cases = _CASE_ORDER.filter(c => forms.some(f => f.tags.includes(c)))
   const nums = _NUM_ORDER.filter(n => forms.some(f => f.tags.includes(n)))
   const lookup = new Map<string,string>()
@@ -271,25 +272,43 @@ function DeclensionTable({ forms }: { forms: WordForm[] }) {
     const n = f.tags.find(t => _NUM_ORDER.includes(t)) ?? ""
     if (c) lookup.set(`${c}|${n}`, f.form)
   }
+  // Map Stanza case abbr (e.g. "Gen") → wiktionary tag (e.g. "genitive")
+  const activeCaseTag = activeCase ? activeCase.toLowerCase() === "prep" ? "prepositional" : Object.entries(_CASE_SHORT).find(([,v]) => v === activeCase)?.[0] : undefined
+
   return (
-    <table className="w-full text-xs border-collapse">
+    <table className="w-full table-fixed text-xs">
       <thead>
         <tr>
-          <th className="text-left font-normal text-zinc-600 pr-3 pb-1 w-10" />
-          {nums.map(n => <th key={n} className="text-center font-medium text-zinc-500 pb-1">{_NUM_SHORT[n]}</th>)}
+          <th className="w-8 pb-1.5" />
+          {nums.map(n => (
+            <th key={n} className="pb-1.5 text-left text-[10px] font-medium uppercase tracking-wider text-zinc-600">
+              {_NUM_SHORT[n]}
+            </th>
+          ))}
         </tr>
       </thead>
       <tbody>
-        {cases.map(c => (
-          <tr key={c} className="border-t border-zinc-800/50">
-            <td className="text-zinc-600 pr-3 py-0.5 whitespace-nowrap">{_CASE_SHORT[c]}</td>
-            {nums.map(n => (
-              <td key={n} className="text-center text-zinc-200 py-0.5">
-                {lookup.get(`${c}|${n}`) ?? lookup.get(`${c}|`) ?? "—"}
+        {cases.map((c, i) => {
+          const isActive = activeCaseTag === c
+          return (
+            <tr key={c} className={cn(
+              "rounded",
+              isActive ? "text-zinc-100" : i % 2 === 0 ? "text-zinc-300" : "text-zinc-400",
+            )}>
+              <td className={cn(
+                "py-1 pr-2 text-[10px] font-medium uppercase tracking-wide whitespace-nowrap",
+                isActive ? "text-zinc-300" : "text-zinc-600"
+              )}>
+                {_CASE_SHORT[c]}
               </td>
-            ))}
-          </tr>
-        ))}
+              {nums.map(n => (
+                <td key={n} className="py-1 pr-2 break-words">
+                  {lookup.get(`${c}|${n}`) ?? lookup.get(`${c}|`) ?? <span className="text-zinc-700">—</span>}
+                </td>
+              ))}
+            </tr>
+          )
+        })}
       </tbody>
     </table>
   )
@@ -374,7 +393,7 @@ function ConjugationTable({ forms }: { forms: WordForm[] }) {
   )
 }
 
-function FormsTable({ forms }: { forms: WordForm[] }) {
+function FormsTable({ forms, activeCase }: { forms: WordForm[]; activeCase?: string }) {
   const cleaned = forms.filter(f =>
     f.form && !f.tags.some(t => _SKIP_TAGS.has(t))
   )
@@ -382,7 +401,7 @@ function FormsTable({ forms }: { forms: WordForm[] }) {
   const hasCases = cleaned.some(f => f.tags.some(t => _CASE_SET.has(t)))
   const hasPersons = cleaned.some(f => f.tags.some(t => t in _PERSON_NORM))
   const hasTenses = cleaned.some(f => f.tags.some(t => _TENSE_ORDER.includes(t)))
-  if (hasCases) return <DeclensionTable forms={cleaned} />
+  if (hasCases) return <DeclensionTable forms={cleaned} activeCase={activeCase} />
   if (hasPersons || hasTenses) return <ConjugationTable forms={cleaned} />
   // Simple: deduplicated flat list
   const seen = new Set<string>()
@@ -424,9 +443,11 @@ interface DefinitionPanelProps {
   bookId?: string
   currentPage?: number
   register?: string | null
+  readerConfig?: ReaderConfig
 }
 
-export function DefinitionPanel({ token, language, languageId, languageCode, bookId, currentPage, register }: DefinitionPanelProps) {
+export function DefinitionPanel({ token, language, languageId, languageCode, bookId, currentPage, register, readerConfig }: DefinitionPanelProps) {
+  const cfg: ReaderConfig = readerConfig ?? READER_CONFIG_DEFAULTS
   const { clearActive, setActiveToken, setSelectedText, activeToken, selectedText, selectedTokens, panelAnchor, sentenceContext } = useReaderStore()
   const queryClient = useQueryClient()
 
@@ -606,6 +627,9 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
 
     return { top, left, bottom: "auto" }
   }, [panelAnchor])
+
+  // Hoisted so both the NLP card and the forms table can use it
+  const caseAbbr = token ? extractFeat(token.f, "Case") : null
 
   return (
     <>
@@ -815,27 +839,24 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
         ) : token ? (
           /* ── Word mode body ── */
           <>
-            {/* Sentence context */}
+            {/* Sentence context — compact quote */}
             {sentenceContext && (
-              <div className="rounded-lg bg-zinc-800/40 p-3">
-                <div className="mb-1.5 flex items-center justify-between">
-                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Context</p>
-                  <button
-                    onClick={() => copyToClipboard(sentenceContext, "context")}
-                    className="rounded p-0.5 text-zinc-600 transition hover:text-zinc-300"
-                    aria-label="Copy sentence"
-                  >
-                    {copiedKey === "context" ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-                  </button>
-                </div>
-                <p className="text-sm text-zinc-300 leading-relaxed">{sentenceContext}</p>
+              <div className="flex items-start gap-2">
+                <div className="mt-0.5 w-0.5 shrink-0 self-stretch rounded-full bg-zinc-700" />
+                <p className="text-xs text-zinc-500 leading-relaxed italic flex-1">{sentenceContext}</p>
+                <button
+                  onClick={() => copyToClipboard(sentenceContext, "context")}
+                  className="shrink-0 rounded p-0.5 text-zinc-700 transition hover:text-zinc-400"
+                  aria-label="Copy sentence"
+                >
+                  {copiedKey === "context" ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                </button>
               </div>
             )}
 
             {/* NLP metadata */}
             {(token.r || token.g || token.f || token.dep_rel) && (() => {
               const langCode = languageCode.slice(0, 2)
-              const caseAbbr = extractFeat(token.f, "Case")
               const caseName = caseAbbr ? (FEAT_VALUE_LABELS[caseAbbr] ?? caseAbbr) : null
               const caseDesc = caseAbbr ? CASE_DESCRIPTIONS[caseAbbr] : null
               const caseQuestion = caseAbbr ? (CASE_QUESTIONS[langCode]?.[caseAbbr]) : null
@@ -844,60 +865,50 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
               const moodDesc = moodAbbr ? MOOD_DESCRIPTIONS[moodAbbr] : null
               const depLabel = token.dep_rel ? DEP_REL_LABELS[token.dep_rel] : null
               const otherFeats = parseFeats(token.f)
+              // Collect all rows for the single NLP card, gated by readerConfig
+              const nlpRows: Array<{ label: string; value: string; highlight?: string }> = []
+              if (cfg.show_case && caseName) {
+                nlpRows.push({
+                  label: caseName,
+                  value: caseDesc ?? "",
+                  highlight: cfg.show_case_question ? (caseQuestion ?? undefined) : undefined,
+                })
+              }
+              if (cfg.show_mood && moodName) {
+                nlpRows.push({ label: moodName, value: moodDesc ?? "" })
+              }
+              if (cfg.show_dep_rel && depLabel && token.dep_rel !== "punct") {
+                nlpRows.push({ label: "Role in sentence", value: depLabel })
+              }
+              if (cfg.show_reading && token.r) {
+                nlpRows.push({ label: "Reading", value: token.r })
+              }
+              if (cfg.show_gender && token.g) {
+                const gLabel = FEAT_VALUE_LABELS[token.g.charAt(0).toUpperCase() + token.g.slice(1)] ?? token.g
+                nlpRows.push({ label: "Gender", value: gLabel })
+              }
+              if (cfg.show_feats) {
+                for (const { key, value } of otherFeats) {
+                  nlpRows.push({ label: key, value })
+                }
+              }
+
+              if (nlpRows.length === 0) return null
               return (
-                <div className="space-y-2">
-                  {/* Case block — shown for inflected languages */}
-                  {caseName && (
-                    <div className="rounded-lg bg-zinc-800/60 p-3 space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-zinc-200">{caseName}</span>
-                        {caseQuestion && (
-                          <span className="text-xs text-amber-400 font-medium">{caseQuestion}</span>
+                <div className="rounded-lg bg-zinc-800/60 divide-y divide-zinc-700/50">
+                  {nlpRows.map(({ label, value, highlight }, i) => (
+                    <div key={i} className="flex items-start justify-between gap-3 px-3 py-2">
+                      <span className="text-xs text-zinc-500 shrink-0">{label}</span>
+                      <div className="text-right min-w-0">
+                        {highlight && (
+                          <span className="text-xs text-amber-400 font-medium">{highlight}</span>
+                        )}
+                        {value && (
+                          <p className={`text-xs ${highlight ? "text-zinc-500 mt-0.5" : "text-zinc-300"}`}>{value}</p>
                         )}
                       </div>
-                      {caseDesc && <p className="text-xs text-zinc-500">{caseDesc}</p>}
                     </div>
-                  )}
-                  {/* Mood block — shown for verbs in French, Spanish, etc. */}
-                  {moodName && (
-                    <div className="rounded-lg bg-zinc-800/60 p-3 space-y-1">
-                      <span className="text-xs font-semibold text-zinc-200">{moodName}</span>
-                      {moodDesc && <p className="text-xs text-zinc-500">{moodDesc}</p>}
-                    </div>
-                  )}
-                  {/* Dependency relation — grammatical role in sentence.
-                      Especially informative for Chinese/Japanese (minimal morphology). */}
-                  {depLabel && token.dep_rel !== "punct" && (
-                    <div className="rounded-lg bg-zinc-800/60 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-zinc-500">Role in sentence</span>
-                        <span className="text-xs text-zinc-300">{depLabel}</span>
-                      </div>
-                    </div>
-                  )}
-                  {/* Reading, gender, other feats */}
-                  {(token.r || token.g || otherFeats.length > 0) && (
-                    <div className="rounded-lg bg-zinc-800/60 p-3 space-y-2">
-                      {token.r && (
-                        <div className="flex justify-between gap-2">
-                          <span className="text-xs text-zinc-500">Reading</span>
-                          <span className="text-xs text-zinc-300">{token.r}</span>
-                        </div>
-                      )}
-                      {token.g && (
-                        <div className="flex justify-between gap-2">
-                          <span className="text-xs text-zinc-500">Gender</span>
-                          <span className="text-xs text-zinc-300 capitalize">{token.g}</span>
-                        </div>
-                      )}
-                      {otherFeats.map(({ key, value }) => (
-                        <div key={key} className="flex justify-between gap-2">
-                          <span className="text-xs text-zinc-500">{key}</span>
-                          <span className="text-xs text-zinc-300">{value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  ))}
                 </div>
               )
             })()}
@@ -990,9 +1001,6 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
 
             {/* Synonyms */}
             <div>
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Synonyms
-              </p>
               {synonymsMutation.isIdle && (
                 <button
                   onClick={() => synonymsMutation.mutate()}
@@ -1041,7 +1049,8 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
               )}
             </div>
 
-            {/* Dictionary */}
+            {/* Dictionary — only render when there's content */}
+            {(defsLoading || (lookupData && lookupData.results.length > 0)) && (
             <div>
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
                 Dictionary
@@ -1088,8 +1097,8 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
                                 </p>
                               ))}
                               {entry.forms && entry.forms.length > 0 && (
-                                <div className="mt-2.5 pt-2.5 border-t border-zinc-700/50">
-                                  <FormsTable forms={entry.forms} />
+                                <div className="mt-2.5 pt-2 border-t border-zinc-700/40">
+                                  <FormsTable forms={entry.forms} activeCase={caseAbbr ?? undefined} />
                                 </div>
                               )}
                             </div>
@@ -1099,10 +1108,9 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
                     </div>
                   ))}
                 </div>
-              ) : (
-                <p className="text-xs text-zinc-600">No dictionary entries found.</p>
-              )}
+              ) : null}
             </div>
+            )}
           </>
         ) : null}
       </div>

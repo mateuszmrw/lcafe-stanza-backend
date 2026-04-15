@@ -14,6 +14,7 @@ import { useAudioPlayerStore } from "@/src/stores/audioPlayer"
 import { useReaderSettings } from "@/src/stores/readerSettings"
 import { recordActivity } from "@/src/lib/api/activity"
 import { groupBySentence } from "@/src/lib/sentences"
+import { listLanguages, resolveReaderConfig, type ReaderConfig } from "@/src/lib/api/languages"
 import { ReadingPane } from "@/src/components/reader/ReadingPane"
 import { SentenceView } from "@/src/components/reader/SentenceView"
 import { KaraokeView } from "@/src/components/reader/KaraokeView"
@@ -32,7 +33,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const searchParams = useSearchParams()
   const page = Number(searchParams.get("page") ?? "1")
   const sentenceParam = Number(searchParams.get("sentence") ?? "0")
-  const { activeToken, clearActive, setActiveToken, selectedText, setPanelAnchor } = useReaderStore()
+  const { activeToken, clearActive, setActiveToken, selectedText, setPanelAnchor, setSentenceContext } = useReaderStore()
   const queryClient = useQueryClient()
 
   const [viewMode, setViewMode] = useState<ViewMode>("page")
@@ -85,6 +86,15 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   }, [alignmentsData])
 
   const sentences = groupBySentence(pageData?.items[0]?.tokens ?? [])
+
+  const { data: languages } = useQuery({
+    queryKey: ["languages"],
+    queryFn: listLanguages,
+    staleTime: Infinity,
+  })
+  const readerConfig: ReaderConfig | undefined = languages && book
+    ? resolveReaderConfig(languages.find(l => l.code === book.language_code) ?? { reader_config: {} })
+    : undefined
 
   // Restore last-read page if no explicit ?page= param in URL
   useEffect(() => {
@@ -315,10 +325,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
                 if (activeToken?.w === token.w && activeToken?.si === token.si) {
                   setActiveToken(null)
                   setPanelAnchor(null)
+                  setSentenceContext(null)
                 } else {
                   setActiveToken(token)
                   const rect = e.currentTarget.getBoundingClientRect()
                   setPanelAnchor({ x: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom })
+                  const sentenceTokens = sentences.find(s => s.length > 0 && s[0].si === token.si) ?? []
+                  setSentenceContext(sentenceTokens.filter(t => t.pos !== "PUNCT").map(t => t.w).join(" ").trim() || null)
                 }
               }}
             />
@@ -334,6 +347,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
             bookId={book.id}
             currentPage={page}
             register={book.register}
+            readerConfig={readerConfig}
           />
         )}
       </div>

@@ -1,4 +1,5 @@
 import { apiClient } from "./client"
+import type { ReaderConfig } from "./languages"
 
 export interface UserAdminResponse {
   id: string
@@ -28,6 +29,7 @@ export interface LanguageAdminResponse {
   name: string
   flag_emoji: string | null
   is_active: boolean
+  reader_config: Record<string, boolean>
 }
 
 export async function listAdminUsers(
@@ -268,5 +270,15 @@ export async function updateAdminLanguage(
   return apiClient<LanguageAdminResponse>(`/admin/languages/${languageId}`, {
     method: "PUT",
     body: JSON.stringify(data),
+  })
+}
+
+export async function setReaderConfig(
+  languageId: number,
+  readerConfig: ReaderConfig
+): Promise<LanguageAdminResponse> {
+  return apiClient<LanguageAdminResponse>(`/admin/languages/${languageId}/reader-config`, {
+    method: "PUT",
+    body: JSON.stringify({ reader_config: readerConfig }),
   })
 }

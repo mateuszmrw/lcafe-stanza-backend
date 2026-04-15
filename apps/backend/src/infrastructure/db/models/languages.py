@@ -19,6 +19,9 @@ class Language(Base):
     is_active: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, server_default=sa.text("true")
     )
+    reader_config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")
+    )
 
 
 class LanguageNlpConfig(Base):
