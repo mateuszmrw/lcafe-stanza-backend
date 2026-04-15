@@ -6,9 +6,8 @@ from functools import lru_cache
 
 import jwt
 import sqlalchemy as sa
-from arq import ArqRedis, create_pool
-from arq.connections import RedisSettings
-from fastapi import Depends, HTTPException
+from arq import ArqRedis
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,8 +29,6 @@ from src.infrastructure.stanza.client import (
 )
 
 _bearer_scheme = HTTPBearer(auto_error=False)
-_arq_pool: ArqRedis | None = None
-_redis_conn: Redis | None = None
 
 
 @lru_cache()
@@ -50,20 +47,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-async def get_arq_pool() -> ArqRedis:
-    global _arq_pool
-    if _arq_pool is None:
-        settings = get_settings()
-        _arq_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    return _arq_pool
+async def get_arq_pool(request: Request) -> ArqRedis:
+    return request.app.state.arq
 
 
-async def get_redis() -> Redis:
-    global _redis_conn
-    if _redis_conn is None:
-        settings = get_settings()
-        _redis_conn = Redis.from_url(settings.redis_url)
-    return _redis_conn
+async def get_redis(request: Request) -> Redis:
+    return request.app.state.redis
 
 
 async def get_current_user(

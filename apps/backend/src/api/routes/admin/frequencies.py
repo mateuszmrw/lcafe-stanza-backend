@@ -56,16 +56,13 @@ async def upload_frequencies(
         raise HTTPException(status_code=400, detail="Expected a .tsv, .txt, or .csv file")
 
     lang = language_code.lower()
-    deleted = 0
-
-    if replace:
-        deleted = await _freq_repo.delete_language(session, lang)
 
     content = await file.read()
     lines = content.decode("utf-8", errors="replace").splitlines()
 
-    inserted = 0
-    batch: list[dict] = []
+    # Parse the entire file before touching the DB. This way a malformed file
+    # never wipes existing data (which would happen if we deleted first).
+    rows: list[dict] = []
     auto_rank = 0
 
     for line in lines:
@@ -93,8 +90,7 @@ async def upload_frequencies(
 
         # The file is sorted most-common-first; use row position as rank.
         auto_rank += 1
-
-        batch.append({
+        rows.append({
             "id": uuid.uuid4(),
             "language_code": lang,
             "lemma": lemma,
@@ -102,12 +98,19 @@ async def upload_frequencies(
             "per_million": per_million,
         })
 
-        if len(batch) >= _BATCH_SIZE:
-            inserted += await _freq_repo.bulk_upsert(session, batch)
-            batch = []
+    if not rows:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid rows found. Expected tab-separated or comma-separated lemma + rank.",
+        )
 
-    if batch:
-        inserted += await _freq_repo.bulk_upsert(session, batch)
+    deleted = 0
+    if replace:
+        deleted = await _freq_repo.delete_language(session, lang)
+
+    inserted = 0
+    for i in range(0, len(rows), _BATCH_SIZE):
+        inserted += await _freq_repo.bulk_upsert(session, rows[i : i + _BATCH_SIZE])
 
     await session.commit()
     return ImportResult(language_code=lang, inserted=inserted, deleted=deleted)

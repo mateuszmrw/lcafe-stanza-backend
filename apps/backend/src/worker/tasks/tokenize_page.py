@@ -18,10 +18,10 @@ logger = logging.getLogger(__name__)
 
 _word_repo = WordRepository()
 
-_TOTAL_KEY = "book:{cid}:total_pages"
-_COMPLETED_KEY = "book:{cid}:completed_pages"
-_TOKEN_COUNT_KEY = "book:{cid}:token_count"
-_FINALIZING_KEY = "book:{cid}:finalizing"
+_TOTAL_KEY = "book:{book_id}:total_pages"
+_COMPLETED_KEY = "book:{book_id}:completed_pages"
+_TOKEN_COUNT_KEY = "book:{book_id}:token_count"
+_FINALIZING_KEY = "book:{book_id}:finalizing"
 _REDIS_TTL = 86400  # 24 h
 
 
@@ -31,80 +31,21 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
     stanza_client: StanzaClient = ctx["stanza_client"]
 
     async with AsyncSessionFactory() as session:
-        page = await session.get(ContentPage, page_uuid)
-        if page is None:
-            logger.error("ContentPage %s not found", page_uuid)
+        page, content_item, stanza_lang = await _load_page_context(session, page_uuid)
+        if page is None or content_item is None:
             return
 
-        content_item_id = page.content_item_id
-
-        content_item = await session.get(ContentItem, content_item_id)
-        if content_item is None:
-            logger.error("ContentItem %s not found for page %s", content_item_id, page_uuid)
-            return
-
-        nlp_config = await session.scalar(
-            sa.select(LanguageNlpConfig).where(
-                LanguageNlpConfig.language_id == content_item.language_id
-            )
-        )
-        if nlp_config is None:
-            raise RuntimeError(f"No NLP config for language_id={content_item.language_id}")
-
-        provider = await session.get(Provider, nlp_config.provider_id)
-        if provider is None or provider.slug != "stanza":
-            raise NotImplementedError(
-                f"Provider '{getattr(provider, 'slug', None)}' not supported"
-            )
-
-        stanza_lang: str = nlp_config.config.get("stanza_language_name", "english")
-
-        # Load user settings for vocabulary insertion behaviour.
-        user = await session.get(User, content_item.user_id)
-        # Check per-language profile first, fall back to global user setting
-        lang_profile_result = await session.execute(
-            sa.select(UserLanguageProfile).where(
-                UserLanguageProfile.user_id == content_item.user_id,
-                UserLanguageProfile.language_id == content_item.language_id,
-            )
-        )
-        lang_profile = lang_profile_result.scalar_one_or_none()
-        global_auto_ignore = getattr(user, "auto_ignore_proper_nouns", True) if user else True
-        auto_ignore_propn: bool = (
-            lang_profile.auto_ignore_proper_nouns
-            if lang_profile and lang_profile.auto_ignore_proper_nouns is not None
-            else global_auto_ignore
+        auto_ignore_propn = await _resolve_auto_ignore(
+            session, content_item.user_id, content_item.language_id
         )
 
-        # Tokenize in a background thread — Stanza is CPU-bound and not async-friendly.
         token_dicts: list[dict] = await asyncio.to_thread(
             stanza_client.tokenize_sync, stanza_lang, page.text
         )
 
-        # Upsert this page's unique words into the vocabulary table immediately.
-        # Words are user/language-scoped and independent of books — each page
-        # contributes its new words as soon as it's tokenized.
-        seen: set[str] = set()
-        word_rows: list[dict] = []
-        for t in token_dicts:
-            key = t["w"].lower().strip()
-            if key and key not in seen:
-                seen.add(key)
-                row: dict = {
-                    "user_id": content_item.user_id,
-                    "language_id": content_item.language_id,
-                    "word": key,
-                    "lemma": t.get("l", ""),
-                    "pos": t.get("pos", ""),
-                    "reading": t.get("r", ""),
-                    "gender": t.get("g", ""),
-                    "feats": t.get("feats", ""),
-                    "dep_head": t.get("dep_head", 0),
-                    "dep_rel": t.get("dep_rel", ""),
-                }
-                row["status"] = "ignored" if auto_ignore_propn and t.get("pos") == "PROPN" else "new"
-                word_rows.append(row)
-
+        word_rows = _build_word_rows(
+            token_dicts, content_item.user_id, content_item.language_id, auto_ignore_propn
+        )
         await _word_repo.bulk_upsert(
             session,
             user_id=content_item.user_id,
@@ -115,54 +56,144 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
         page.status = "ready"
         await session.commit()
 
-    # Progress tracking
-    total_key = _TOTAL_KEY.format(cid=content_item_id)
-    completed_key = _COMPLETED_KEY.format(cid=content_item_id)
-    token_count_key = _TOKEN_COUNT_KEY.format(cid=content_item_id)
-    finalizing_key = _FINALIZING_KEY.format(cid=content_item_id)
+    book_id = content_item.id
+    completed, total = await _update_progress(redis, book_id, len(token_dicts))
+
+    logger.info("Tokenized page %s (%d/%d, book=%s)", page_uuid, completed, total, book_id)
+    await publish_import_event(redis, book_id, "progress", {"page": completed, "total": total})
+
+    if total > 0 and completed >= total:
+        await _try_finalize(redis, book_id, completed)
+
+
+async def _load_page_context(
+    session, page_uuid: uuid.UUID
+) -> tuple[ContentPage | None, ContentItem | None, str]:
+    """Load the page, its parent content item, and NLP language name.
+
+    Returns (None, None, "") if any required record is missing or unsupported.
+    """
+    page = await session.get(ContentPage, page_uuid)
+    if page is None:
+        logger.error("ContentPage %s not found", page_uuid)
+        return None, None, ""
+
+    content_item = await session.get(ContentItem, page.content_item_id)
+    if content_item is None:
+        logger.error("ContentItem %s not found for page %s", page.content_item_id, page_uuid)
+        return None, None, ""
+
+    nlp_config = await session.scalar(
+        sa.select(LanguageNlpConfig).where(
+            LanguageNlpConfig.language_id == content_item.language_id
+        )
+    )
+    if nlp_config is None:
+        raise RuntimeError(f"No NLP config for language_id={content_item.language_id}")
+
+    provider = await session.get(Provider, nlp_config.provider_id)
+    if provider is None or provider.slug != "stanza":
+        raise NotImplementedError(
+            f"Provider '{getattr(provider, 'slug', None)}' not supported"
+        )
+
+    stanza_lang: str = nlp_config.config.get("stanza_language_name", "english")
+    return page, content_item, stanza_lang
+
+
+async def _resolve_auto_ignore(session, user_id: uuid.UUID, language_id: int) -> bool:
+    """Return the effective auto_ignore_proper_nouns setting for this user/language."""
+    user = await session.get(User, user_id)
+    global_setting = getattr(user, "auto_ignore_proper_nouns", True) if user else True
+
+    lang_profile = await session.scalar(
+        sa.select(UserLanguageProfile).where(
+            UserLanguageProfile.user_id == user_id,
+            UserLanguageProfile.language_id == language_id,
+        )
+    )
+    if lang_profile and lang_profile.auto_ignore_proper_nouns is not None:
+        return lang_profile.auto_ignore_proper_nouns
+    return global_setting
+
+
+def _build_word_rows(
+    token_dicts: list[dict],
+    user_id: uuid.UUID,
+    language_id: int,
+    auto_ignore_propn: bool,
+) -> list[dict]:
+    """Deduplicate tokens and build word rows for bulk upsert."""
+    seen: set[str] = set()
+    rows: list[dict] = []
+    for t in token_dicts:
+        key = t["w"].lower().strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        is_propn = auto_ignore_propn and t.get("pos") == "PROPN"
+        rows.append({
+            "user_id": user_id,
+            "language_id": language_id,
+            "word": key,
+            "lemma": t.get("l", ""),
+            "pos": t.get("pos", ""),
+            "reading": t.get("r", ""),
+            "gender": t.get("g", ""),
+            "feats": t.get("feats", ""),
+            "dep_head": t.get("dep_head", 0),
+            "dep_rel": t.get("dep_rel", ""),
+            "status": "ignored" if is_propn else "new",
+        })
+    return rows
+
+
+async def _update_progress(redis: Redis, book_id: uuid.UUID, token_count: int) -> tuple[int, int]:
+    """Increment Redis counters and return (completed, total)."""
+    completed_key = _COMPLETED_KEY.format(book_id=book_id)
+    total_key = _TOTAL_KEY.format(book_id=book_id)
+    token_count_key = _TOKEN_COUNT_KEY.format(book_id=book_id)
 
     completed = await redis.incr(completed_key)
-    await redis.incrby(token_count_key, len(token_dicts))
+    await redis.incrby(token_count_key, token_count)
     await redis.expire(token_count_key, _REDIS_TTL)
 
     total_raw = await redis.get(total_key)
     total = int(total_raw) if total_raw else 0
-
-    logger.info("Tokenized page %s (%d/%d, book=%s)", page_uuid, completed, total, content_item_id)
-
-    await publish_import_event(
-        redis, content_item_id, "progress", {"page": int(completed), "total": total}
-    )
-
-    if total > 0 and completed >= total:
-        # Claim finalization via SETNX — only one worker runs this even if two
-        # jobs race to complete the last page simultaneously.
-        acquired = await redis.setnx(finalizing_key, "1")
-        if acquired:
-            await redis.expire(finalizing_key, _REDIS_TTL)
-            try:
-                await _finalize(redis, content_item_id, int(completed))
-            finally:
-                await redis.delete(completed_key)
-                await redis.delete(total_key)
-                await redis.delete(token_count_key)
-                await redis.delete(finalizing_key)
+    return int(completed), total
 
 
-async def _finalize(redis: Redis, content_item_id: uuid.UUID, page_count: int) -> None:
-    logger.info("Finalizing book: content_item_id=%s", content_item_id)
+async def _try_finalize(redis: Redis, book_id: uuid.UUID, completed: int) -> None:
+    """Claim finalization via SETNX and run _finalize exactly once per book."""
+    finalizing_key = _FINALIZING_KEY.format(book_id=book_id)
+    acquired = await redis.setnx(finalizing_key, "1")
+    if not acquired:
+        return
 
-    token_count_raw = await redis.get(_TOKEN_COUNT_KEY.format(cid=content_item_id))
+    await redis.expire(finalizing_key, _REDIS_TTL)
+    try:
+        await _finalize(redis, book_id, completed)
+    finally:
+        await redis.delete(_COMPLETED_KEY.format(book_id=book_id))
+        await redis.delete(_TOTAL_KEY.format(book_id=book_id))
+        await redis.delete(_TOKEN_COUNT_KEY.format(book_id=book_id))
+        await redis.delete(finalizing_key)
+
+
+async def _finalize(redis: Redis, book_id: uuid.UUID, page_count: int) -> None:
+    logger.info("Finalizing book: book_id=%s", book_id)
+
+    token_count_raw = await redis.get(_TOKEN_COUNT_KEY.format(book_id=book_id))
     total_token_count = int(token_count_raw) if token_count_raw else 0
 
     has_audio_overlay = False
     async with AsyncSessionFactory() as session:
-        content_item = await session.get(ContentItem, content_item_id)
+        content_item = await session.get(ContentItem, book_id)
         if content_item is None:
-            logger.error("ContentItem %s not found during finalization", content_item_id)
+            logger.error("ContentItem %s not found during finalization", book_id)
             return
 
-        book = await session.get(Book, content_item_id)
+        book = await session.get(Book, book_id)
         if book:
             has_audio_overlay = bool(book.has_audio_overlay)
 
@@ -172,18 +203,17 @@ async def _finalize(redis: Redis, content_item_id: uuid.UUID, page_count: int) -
 
     await publish_import_event(
         redis,
-        content_item_id,
+        book_id,
         "completed",
         {"word_count": total_token_count, "page_count": page_count},
     )
     logger.info(
-        "Book import complete: content_item_id=%s pages=%d tokens=%d",
-        content_item_id,
+        "Book import complete: book_id=%s pages=%d tokens=%d",
+        book_id,
         page_count,
         total_token_count,
     )
 
     if has_audio_overlay:
-        # redis is ArqRedis in workers — enqueue SMIL alignment now that all pages are ready
-        await redis.enqueue_job("align_smil_audio", str(content_item_id))  # type: ignore[attr-defined]
-        logger.info("Enqueued align_smil_audio for book %s", content_item_id)
+        await redis.enqueue_job("align_smil_audio", str(book_id))  # type: ignore[attr-defined]
+        logger.info("Enqueued align_smil_audio for book %s", book_id)

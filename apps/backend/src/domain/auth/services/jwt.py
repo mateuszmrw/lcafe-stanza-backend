@@ -5,6 +5,9 @@ import jwt
 from src.core.config import get_settings
 
 
+_ALGORITHM = "HS256"
+
+
 def create_access_token(subject: str, additional_claims: dict | None = None) -> str:
     settings = get_settings()
     now = datetime.now(UTC)
@@ -16,7 +19,7 @@ def create_access_token(subject: str, additional_claims: dict | None = None) -> 
     }
     if additional_claims:
         payload.update(additional_claims)
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorith)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGORITHM)
 
 
 def create_refresh_token(subject: str) -> str:
@@ -28,12 +31,10 @@ def create_refresh_token(subject: str) -> str:
         "exp": now + timedelta(days=settings.refresh_token_expire_days),
         "type": "refresh",
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorith)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGORITHM)
 
 
 def decode_token(token: str) -> dict:
     """Decode and verify a JWT. Raises jwt.ExpiredSignatureError or jwt.InvalidTokenError on failure."""
     settings = get_settings()
-    return jwt.decode(
-        token, settings.jwt_secret, algorithms=[settings.jwt_algorith]
-    )
+    return jwt.decode(token, settings.jwt_secret, algorithms=[_ALGORITHM])

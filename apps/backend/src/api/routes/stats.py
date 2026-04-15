@@ -147,7 +147,7 @@ async def get_stats(
         .where(
             ContentItem.user_id == current_user.id,
             ContentItem.language_id == language_id,
-            ContentPage.status == "done",
+            ContentPage.status == "ready",
         )
     ) or 0
 

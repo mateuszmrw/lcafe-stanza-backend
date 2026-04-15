@@ -8,8 +8,10 @@ from src.api.dependencies import get_db, require_admin
 from src.api.schemas.admin import UserAdminCreateRequest, UserAdminResponse, UserAdminUpdateRequest
 from src.domain.auth.services.password import hash_password
 from src.infrastructure.db.models.users import User
+from src.infrastructure.db.repositories.user_repo import UserRepository
 
 router = APIRouter(prefix="/admin/users", tags=["admin"])
+_user_repo = UserRepository()
 
 
 @router.get("", response_model=list[UserAdminResponse])
@@ -19,11 +21,7 @@ async def list_users(
     _: User = Depends(require_admin),
     session: AsyncSession = Depends(get_db),
 ) -> list[UserAdminResponse]:
-    offset = (page - 1) * limit
-    result = await session.execute(
-        sa.select(User).order_by(User.created_at.desc()).offset(offset).limit(limit)
-    )
-    users = list(result.scalars().all())
+    users = await _user_repo.list_all(session, page=page, limit=limit)
     return [UserAdminResponse.model_validate(u) for u in users]
 
 
@@ -45,8 +43,6 @@ async def update_user(
         user.is_active = body.is_active
     if body.password is not None:
         user.password_hash = hash_password(body.password)
-    if body.proficiency_level is not None:
-        user.proficiency_level = body.proficiency_level
     if body.native_language_code is not None:
         user.native_language_code = body.native_language_code
 
@@ -72,7 +68,6 @@ async def create_user(
         username=body.username,
         password_hash=hash_password(body.password),
         role=body.role,
-        proficiency_level=body.proficiency_level,
         native_language_code=body.native_language_code,
     )
     session.add(user)

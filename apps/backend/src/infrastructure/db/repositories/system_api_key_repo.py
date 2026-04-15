@@ -22,10 +22,10 @@ class SystemApiKeyRepository:
             sa.text(
                 """
                 INSERT INTO system_api_keys (provider_id, api_key_encrypted, model)
-                VALUES (:provider_id, pgp_sym_encrypt(:key, :passphrase), :model)
+                VALUES (:provider_id, pgp_sym_encrypt(:key, :passphrase, 'cipher-algo=aes256'), :model)
                 ON CONFLICT (provider_id)
                 DO UPDATE SET
-                    api_key_encrypted = pgp_sym_encrypt(:key, :passphrase),
+                    api_key_encrypted = pgp_sym_encrypt(:key, :passphrase, 'cipher-algo=aes256'),
                     model = COALESCE(:model, system_api_keys.model),
                     updated_at = now()
                 """
@@ -77,7 +77,7 @@ class SystemApiKeyRepository:
         result = await session.execute(
             sa.text(
                 """
-                SELECT pgp_sym_decrypt(api_key_encrypted, :passphrase) AS api_key
+                SELECT pgp_sym_decrypt(api_key_encrypted, :passphrase, 'cipher-algo=aes256') AS api_key
                 FROM system_api_keys
                 WHERE provider_id = :provider_id
                 """

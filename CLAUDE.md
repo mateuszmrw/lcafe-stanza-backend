@@ -4,13 +4,14 @@ Guidance for Claude Code when working in this repository.
 
 ## Project: Slovo
 
-Self-hosted LingQ clone — a language learning platform. Users upload EPUB books, the backend tokenizes them with Stanza NLP, and the reader lets them look up words, track vocabulary statuses, get translations, and (upcoming) receive grammar explanations and synonym nuance.
+Self-hosted language learning platform (LingQ-clone). Users upload EPUB/PDF books, the backend tokenizes them with Stanza NLP, and the reader lets them look up words, track vocabulary statuses, get translations, grammar explanations, and synonym nuance. Includes EPUB3 audiobook support (SMIL overlays), on-demand TTS generation, reading streaks, Anki sync, and word frequency coverage stats.
 
 **Monorepo layout:**
 - `apps/backend/` — FastAPI + Stanza + ARQ worker (Python 3.12, `uv`)
 - `apps/web/` — Next.js 15 App Router (TypeScript, `pnpm`)
-- `docs/adr/` — Architecture Decision Records (read before making structural decisions)
+- `docs/adr/` — Architecture Decision Records (read before structural decisions)
 - `docs/architecture/` — C4 Mermaid diagrams
+- `.claude/ClaudeReference.md` — Detailed architectural reference
 
 ## Commands
 
@@ -45,55 +46,71 @@ pnpm lint          # ESLint + tsc
 ### Docker (from repo root)
 
 ```bash
-docker compose up  # PostgreSQL (5432) + Redis (6379) + backend (8678) + worker
+docker compose up  # PostgreSQL (5432) + Redis (6379) + backend (8678) + ARQ worker + web (4412)
 ```
 
 ## Architecture overview
 
 ```
-Browser (Next.js 15)
-    ↓ HTTP/JSON
+Browser (Next.js 15, port 3000 / 4412 in Docker)
+    ↓ HTTP/JSON + SSE
 FastAPI backend (:8678)
-    ↓ SQLAlchemy async
-PostgreSQL (primary store — books, pages, vocabulary, users)
+    ↓ SQLAlchemy async (asyncpg)
+PostgreSQL — books, pages, vocabulary, users, alignments, phrases, activity, streaks
     ↓ ARQ job queue
-Redis (:6379)
+Redis (:6379) — job queue + SSE pub/sub + rate limiting + stats cache (5 min TTL)
     ↓ worker tasks
-ARQ worker (tokenize_page) → Stanza NLP pipeline
-    ↓ SSE events
-Browser (real-time import progress)
+ARQ worker — tokenize_page, align_smil_audio, generate_tts_audio
+    ↓ Stanza NLP / Qwen TTS
+Browser (SSE for real-time import + audio alignment progress)
 ```
 
 **External services:**
-- DeepL API — translation (multi-instance, source→target language pairs stored in DB)
-- Wiktionary adapter — dictionary lookups
-- OpenAI / Claude (planned) — grammar explanation and synonym nuance (ADR-001, ADR-002)
+- DeepL API — translation (multi-instance: multiple source→target pairs in `deepl_instances` table)
+- Wiktionary — dictionary lookups (pre-imported from dump via `/admin/dictionary`)
+- OpenAI / Claude — grammar explanation and synonym nuance (LLM cascade: DB system key → env var)
+- Qwen TTS — text-to-speech generation for books without embedded audio
 
-## Key design decisions
+## Critical design decisions
 
-- **See `docs/adr/`** before changing NLP, LLM, or search infrastructure. ADR-001 and ADR-002 govern the upcoming grammar/synonym features.
-- Vocabulary words are **keyed by surface form** (`word.lower().strip()`), not lemma. The tokenizer stores surface forms; `get_words_map` looks up by surface form. Do not change this without updating `tokenize_page`, `get_words_map`, `upsert_with_status`, and `DefinitionPanel`.
-- **StanzaClient is a singleton.** Never re-instantiate it per request. It's expensive (~seconds) to initialize. Processors currently: `tokenize,pos,lemma`. `depparse` is planned (ADR-001).
-- **DeepL instances** are stored in `deepl_instances` table (one row per source→target language pair). `translation.py` queries all enabled instances for the source language and fans out.
-- **ARQ worker** runs as a separate process. `tokenize_page` is the only task. Pages are dispatched via `arq.create_pool` in the books upload route.
+Read `.claude/ClaudeReference.md` before making structural decisions. The non-negotiable rules:
+
+- **Vocabulary keyed by surface form** (`word.lower().strip()`), not lemma. Unique index: `(user_id, language_id, word)`. Changing this breaks `tokenize_page`, `get_words_map`, `upsert_with_status`, and `DefinitionPanel` simultaneously.
+- **StanzaClient is a singleton** — initialized once at startup, never per-request. Current processors: `tokenize,pos,lemma`.
+- **Redis lives in `app.state`** — created in `lifespan`, accessed via `get_redis(request)` and `get_arq_pool(request)` dependencies.
+- **API keys are AES-256 encrypted** in the DB using `db_encryption_key`. Never store plaintext.
+- **Token version** (`users.token_version`) is bumped on each login to invalidate other sessions.
+- **All DB access goes through repository classes** — no raw SQLAlchemy in route handlers.
 
 ## Environment variables (`.env` in `apps/backend/`)
 
-| Variable        | Default                   | Description                           |
-| --------------- | ------------------------- | ------------------------------------- |
-| `debug`         | `false`                   | SQLAlchemy echo + debug logging       |
-| `languages`     | `["russian", "polish"]`   | Stanza pipelines to preload           |
-| `use_gpu`       | `false`                   | CUDA for Stanza                       |
-| `model_dir`     | `stanza_resources`        | Stanza model cache path               |
-| `storage_root`  | `/app/storage`            | Book file uploads root                |
-| `db_host`       | `localhost`               | PostgreSQL host                       |
-| `db_port`       | `5432`                    | PostgreSQL port                       |
-| `db_database`   | `db`                      | DB name                               |
-| `db_username`   | `user`                    | DB user                               |
-| `db_password`   | `password`                | DB password                           |
-| `redis_url`     | `redis://localhost:6379`  | ARQ + general Redis                   |
-| `jwt_secret`    | —                         | JWT signing secret (required)         |
-| `deepl_api_key` | —                         | DeepL API key (optional, system-wide) |
+| Variable                      | Default              | Description                                    |
+|-------------------------------|----------------------|------------------------------------------------|
+| `debug`                       | `false`              | SQLAlchemy echo + debug logging                |
+| `languages`                   | `[]`                 | Extra Stanza pipelines to preload at startup   |
+| `use_gpu`                     | `false`              | CUDA for Stanza                                |
+| `model_dir`                   | `stanza_resources`   | Stanza model cache path                        |
+| `storage_root`                | `/app/storage`       | Root for all uploaded files                    |
+| `db_host`                     | `localhost`          | PostgreSQL host                                |
+| `db_port`                     | `5432`               | PostgreSQL port                                |
+| `db_database`                 | `db`                 | DB name                                        |
+| `db_username`                 | `user`               | DB user                                        |
+| `db_password`                 | `password`           | DB password                                    |
+| `redis_url`                   | `redis://redis:6379` | ARQ + general Redis                            |
+| `jwt_secret`                  | —                    | JWT signing secret **(required)**              |
+| `db_encryption_key`           | —                    | AES-256 key for encrypted API keys **(required)** |
+| `max_upload_bytes`            | `524288000` (500 MB) | Upload size limit                              |
+| `access_token_expire_minutes` | `60`                 | Access JWT TTL                                 |
+| `refresh_token_expire_days`   | `31`                 | Refresh token TTL                              |
+| `deepl_api_key`               | —                    | DeepL API key (optional, system-wide fallback) |
+| `openai_api_key`              | —                    | OpenAI API key (optional)                      |
+| `openai_model`                | `gpt-5.4-mini`       | OpenAI model for grammar/synonyms              |
+| `claude_api_key`              | —                    | Claude API key (optional)                      |
+| `claude_model`                | `claude-sonnet-4-6`  | Claude model for grammar/synonyms              |
+| `admin_email`                 | —                    | Auto-create first admin on startup             |
+| `admin_password`              | —                    | Auto-create first admin on startup             |
+| `qwen_tts_url`                | —                    | Qwen TTS endpoint (optional)                   |
+| `qwen_tts_api_key`            | —                    | Qwen TTS API key (optional)                    |
 
 <!-- MEMORY:START -->
 # cafe-backend

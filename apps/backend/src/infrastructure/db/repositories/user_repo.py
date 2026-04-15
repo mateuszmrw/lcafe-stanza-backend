@@ -47,6 +47,19 @@ class UserRepository:
         await session.flush()
         return user
 
+    async def list_all(
+        self,
+        session: AsyncSession,
+        page: int = 1,
+        limit: int = 50,
+    ) -> list[User]:
+        """Return a paginated list of all users, newest first."""
+        offset = (page - 1) * limit
+        result = await session.execute(
+            sa.select(User).order_by(User.created_at.desc()).offset(offset).limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def set_refresh_token_hash(
         self,
         session: AsyncSession,

@@ -11,12 +11,15 @@ class Settings(BaseSettings):
     use_gpu: bool = False
     model_dir: str = "stanza_resources"
     jwt_secret: str
-    jwt_algorith: str = "HS256"
+    # JWT algorithm is hardcoded to HS256 — no practical reason to make it configurable.
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 31
     db_encryption_key: str
     storage_root: str = "/app/storage"
     redis_url: str = "redis://redis:6379"
+
+    # File upload limit — protects against OOM from large uploads
+    max_upload_bytes: int = 500 * 1024 * 1024  # 500 MB
 
     # Database
     db_host: str = "localhost"
@@ -29,7 +32,7 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-5.4-mini"
     claude_api_key: Optional[str] = None
-    claude_model: str = "claude-opus-4-6"
+    claude_model: str = "claude-sonnet-4-6"
     admin_email: Optional[str] = None
     admin_password: Optional[str] = None
 

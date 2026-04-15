@@ -2,7 +2,6 @@ import hashlib
 import io
 import json
 import os
-import re
 import uuid
 import zipfile
 from typing import AsyncGenerator
@@ -30,6 +29,7 @@ from src.api.schemas.books import (
     TokenWithStatus,
 )
 from src.core.config import get_settings
+from src.domain.content.page_enricher import collect_surface_forms, enrich_page_tokens
 from src.domain.content.service import ContentService
 from src.domain.nlp.services.book_chunker import BookChunker
 from src.domain.nlp.services.book_parser import BookParser
@@ -40,12 +40,6 @@ from src.infrastructure.db.models.users import User
 from src.infrastructure.db.repositories.audio_repo import AudioRepository
 from src.infrastructure.db.repositories.content_page_repo import ContentPageRepository
 from src.infrastructure.db.repositories.word_repo import WordRepository
-
-# Matches individual word tokens (letters/digits only) — used for vocabulary lookups.
-_WORD_RE = re.compile(r"\b\w+\b")
-# Matches words OR individual punctuation/symbol characters (not whitespace).
-# Used when building the full token list for the reader, so punctuation is preserved.
-_TOKEN_RE = re.compile(r"\w+|[^\w\s]")
 
 router = APIRouter(prefix="/books", tags=["books"])
 _content_service = ContentService()
@@ -71,7 +65,13 @@ async def upload_book(
     if language_id != current_user.active_language_id:
         raise HTTPException(status_code=400, detail="Book language must match your active language")
 
-    content = await file.read()
+    settings = get_settings()
+    content = await file.read(settings.max_upload_bytes + 1)
+    if len(content) > settings.max_upload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum allowed size is {settings.max_upload_bytes // (1024 * 1024)} MB.",
+        )
 
     # Detect format by magic bytes.
     _PDF_MAGIC = b"%PDF"
@@ -107,7 +107,6 @@ async def upload_book(
             detail=f"Book already exists with status '{duplicate_status}'",
         )
 
-    settings = get_settings()
     books_dir = os.path.join(settings.storage_root, "books")
     os.makedirs(books_dir, exist_ok=True)
 
@@ -258,8 +257,7 @@ async def get_pages(
     all_surface_forms: list[str] = []
     for p in pages:
         if p.status == "ready":
-            for m in _WORD_RE.finditer(p.text):
-                all_surface_forms.append(m.group(0).lower())
+            all_surface_forms.extend(collect_surface_forms(p.text))
 
     words_map = await _word_repo.get_words_map(
         session,
@@ -270,57 +268,7 @@ async def get_pages(
 
     page_responses: list[PageResponse] = []
     for p in pages:
-        enriched_tokens: list[TokenWithStatus] = []
-        if p.status == "ready":
-            # Split on double newlines for paragraphs, single newlines for sentences.
-            # Both formats exist: new imports use \n\n, legacy data uses \r?\n.
-            paragraphs = re.split(r"\n\n+", p.text)
-            global_si = 0
-            for pi, paragraph in enumerate(paragraphs):
-                sentences = [s for s in re.split(r"\r?\n", paragraph) if s.strip()]
-                if not sentences:
-                    sentences = [paragraph]
-                for sentence in sentences:
-                    for m in _TOKEN_RE.finditer(sentence):
-                        surface = m.group(0)
-                        is_punct = not (surface[0].isalnum() or surface[0] == "_")
-                        if is_punct:
-                            enriched_tokens.append(
-                                TokenWithStatus(
-                                    w=surface,
-                                    l="",
-                                    pos="PUNCT",
-                                    r="",
-                                    pi=pi,
-                                    si=global_si,
-                                    g="",
-                                    f="",
-                                    dep_head=0,
-                                    dep_rel="",
-                                    status="ignored",
-                                )
-                            )
-                        else:
-                            key = surface.lower()
-                            word_data = words_map.get(key, {})
-                            enriched_tokens.append(
-                                TokenWithStatus(
-                                    id=word_data.get("id"),
-                                    w=surface,
-                                    l=word_data.get("lemma", ""),
-                                    pos=word_data.get("pos", ""),
-                                    r=word_data.get("reading", ""),
-                                    pi=pi,
-                                    si=global_si,
-                                    g=word_data.get("gender", ""),
-                                    f=word_data.get("feats", ""),
-                                    dep_head=word_data.get("dep_head", 0),
-                                    dep_rel=word_data.get("dep_rel", ""),
-                                    hint=word_data.get("hint"),
-                                    status=word_data.get("status", "new"),
-                                )
-                            )
-                    global_si += 1
+        enriched_tokens = enrich_page_tokens(p.text, words_map) if p.status == "ready" else []
         page_responses.append(
             PageResponse(
                 id=p.id,
@@ -574,12 +522,14 @@ async def stream_audio(
 
     if file_path:
         # Validate that the requested file is within this book's audio directory.
-        # Normalize to prevent path traversal.
-        allowed_prefix = os.path.join("books", str(book_id), "audio") + os.sep
-        norm = os.path.normpath(file_path)
-        if not norm.startswith(os.path.normpath(allowed_prefix)):
+        # Use realpath to resolve symlinks before checking the prefix, which
+        # prevents traversal via symlinks (normpath alone does not resolve them).
+        abs_path = os.path.realpath(os.path.join(settings.storage_root, file_path))
+        expected_prefix = os.path.realpath(
+            os.path.join(settings.storage_root, "books", str(book_id), "audio")
+        )
+        if not abs_path.startswith(expected_prefix + os.sep):
             raise HTTPException(status_code=403, detail="Access denied")
-        abs_path = os.path.join(settings.storage_root, norm)
     else:
         if not book.audio_file_path:
             raise HTTPException(status_code=404, detail="No audio file for this book")

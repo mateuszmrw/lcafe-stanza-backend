@@ -1,14 +1,14 @@
 """add sentence_context to words
 
-Revision ID: 0031
-Revises: 0030
+Revision ID: 0041
+Revises: 0040
 Create Date: 2026-04-15
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0031"
-down_revision = "0030"
+revision = "0041"
+down_revision = "0040"
 branch_labels = None
 depends_on = None
 

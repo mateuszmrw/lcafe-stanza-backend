@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 import sqlalchemy as sa
@@ -35,7 +35,10 @@ class ContentItem(Base):
         sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
-        sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.text("now()"),
+        onupdate=lambda: datetime.now(UTC),
     )
 
 

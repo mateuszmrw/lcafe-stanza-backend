@@ -23,10 +23,10 @@ class ApiKeyRepository:
             sa.text(
                 """
                 INSERT INTO user_api_keys (user_id, provider_id, api_key_encrypted)
-                VALUES (:user_id, :provider_id, pgp_sym_encrypt(:key, :passphrase))
+                VALUES (:user_id, :provider_id, pgp_sym_encrypt(:key, :passphrase, 'cipher-algo=aes256'))
                 ON CONFLICT (user_id, provider_id)
                 DO UPDATE SET
-                    api_key_encrypted = pgp_sym_encrypt(:key, :passphrase),
+                    api_key_encrypted = pgp_sym_encrypt(:key, :passphrase, 'cipher-algo=aes256'),
                     updated_at = now()
                 """
             ).bindparams(
@@ -48,7 +48,7 @@ class ApiKeyRepository:
         result = await session.execute(
             sa.text(
                 """
-                SELECT pgp_sym_decrypt(api_key_encrypted, :passphrase) AS api_key
+                SELECT pgp_sym_decrypt(api_key_encrypted, :passphrase, 'cipher-algo=aes256') AS api_key
                 FROM user_api_keys
                 WHERE user_id = :user_id AND provider_id = :provider_id
                 """

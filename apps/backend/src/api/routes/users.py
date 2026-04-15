@@ -1,5 +1,4 @@
 import os
-import shutil
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,14 +14,16 @@ from src.api.schemas.users import ActiveLanguageRequest, ApiKeyResponse, ApiKeyU
 from src.domain.users.models import UserUpdate
 from src.domain.users.service import UserService
 from src.infrastructure.db.models.languages import Language
-from src.infrastructure.db.models.users import User, UserLanguageProfile
+from src.infrastructure.db.models.users import User
 from src.infrastructure.db.repositories.api_key_repo import ApiKeyRepository
 from src.infrastructure.db.repositories.provider_repo import ProviderRepository
+from src.infrastructure.db.repositories.user_language_profile_repo import UserLanguageProfileRepository
 
 router = APIRouter(prefix="/users", tags=["users"])
 _user_service = UserService()
 _provider_repo = ProviderRepository()
 _api_key_repo = ApiKeyRepository()
+_lang_profile_repo = UserLanguageProfileRepository()
 
 
 async def _build_user_response(user: User, session: AsyncSession) -> UserResponse:
@@ -31,13 +32,9 @@ async def _build_user_response(user: User, session: AsyncSession) -> UserRespons
     profile = None
     if user.active_language_id is not None:
         lang = await session.get(Language, user.active_language_id)
-        result = await session.execute(
-            sa.select(UserLanguageProfile).where(
-                UserLanguageProfile.user_id == user.id,
-                UserLanguageProfile.language_id == user.active_language_id,
-            )
+        profile = await _lang_profile_repo.find_by_user_and_language(
+            session, user.id, user.active_language_id
         )
-        profile = result.scalar_one_or_none()
 
     return UserResponse(
         id=user.id,
@@ -121,32 +118,15 @@ async def set_proficiency(
     if current_user.active_language_id is None:
         raise HTTPException(status_code=422, detail="Set an active language before updating learning profile.")
 
-    # Build the upsert values for this language profile
-    upsert_values: dict = {
-        "user_id": current_user.id,
-        "language_id": current_user.active_language_id,
-    }
-    update_set: dict = {}
-
+    fields: dict = {}
     if body.proficiency_level is not None:
-        upsert_values["proficiency_level"] = body.proficiency_level
-        update_set["proficiency_level"] = body.proficiency_level
+        fields["proficiency_level"] = body.proficiency_level
     if body.native_language_code is not None:
-        upsert_values["native_language_code"] = body.native_language_code
-        update_set["native_language_code"] = body.native_language_code
+        fields["native_language_code"] = body.native_language_code
     if body.auto_ignore_proper_nouns is not None:
-        upsert_values["auto_ignore_proper_nouns"] = body.auto_ignore_proper_nouns
-        update_set["auto_ignore_proper_nouns"] = body.auto_ignore_proper_nouns
+        fields["auto_ignore_proper_nouns"] = body.auto_ignore_proper_nouns
 
-    if update_set:
-        await session.execute(
-            sa.dialects.postgresql.insert(UserLanguageProfile)
-            .values(**upsert_values)
-            .on_conflict_do_update(
-                index_elements=["user_id", "language_id"],
-                set_=update_set,
-            )
-        )
+    await _lang_profile_repo.upsert(session, current_user.id, current_user.active_language_id, **fields)
     await session.commit()
     return await _build_user_response(current_user, session)
 

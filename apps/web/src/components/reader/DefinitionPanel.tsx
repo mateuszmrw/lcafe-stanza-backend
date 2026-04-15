@@ -13,6 +13,7 @@ import { createPhrase } from "@/src/lib/api/phrases"
 import { useReaderStore } from "@/src/stores/reader"
 import { getLanguageLabel } from "@/src/lib/language-flags"
 import { cn } from "@/src/lib/cn"
+import { STATUSES } from "@/src/lib/status-colors"
 
 const MAX_SELECTION_CHARS = 500
 
@@ -39,13 +40,6 @@ function speakWord(word: string, langCode: string): void {
   window.speechSynthesis.speak(utt)
 }
 
-const STATUSES = [
-  { value: "new", label: "New", color: "bg-sky-700 hover:bg-sky-600" },
-  { value: "learning", label: "Learning", color: "bg-emerald-600 hover:bg-emerald-500" },
-  { value: "known", label: "Known", color: "bg-emerald-900 hover:bg-emerald-800" },
-  { value: "well_known", label: "Well known", color: "bg-zinc-700 hover:bg-zinc-600" },
-  { value: "ignored", label: "Ignore", color: "bg-zinc-800 hover:bg-zinc-700 text-zinc-400" },
-] as const
 
 const POS_LABELS: Record<string, string> = {
   ADJ: "Adjective", ADP: "Adposition", ADV: "Adverb", AUX: "Auxiliary",

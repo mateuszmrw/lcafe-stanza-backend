@@ -66,7 +66,8 @@ class UserAdminResponse(BaseModel):
     role: str
     is_active: bool
     created_at: datetime
-    proficiency_level: Optional[str] = None
+    # native_language_code is a global default; proficiency_level is per-language
+    # (on UserLanguageProfile) and is not exposed here.
     native_language_code: Optional[str] = None
 
     model_config = {"from_attributes": True}
@@ -76,7 +77,8 @@ class UserAdminUpdateRequest(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
-    proficiency_level: Optional[str] = None
+    # native_language_code is a global default on User; proficiency_level is NOT
+    # on User — it lives on UserLanguageProfile (per language) and cannot be set here.
     native_language_code: Optional[str] = None
 
     @field_validator("role")
@@ -93,20 +95,12 @@ class UserAdminUpdateRequest(BaseModel):
             raise ValueError("password must be at least 8 characters")
         return v
 
-    @field_validator("proficiency_level")
-    @classmethod
-    def proficiency_must_be_valid(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v not in ("A1", "A2", "B1", "B2", "C1", "C2"):
-            raise ValueError("proficiency_level must be A1–C2")
-        return v
-
 
 class UserAdminCreateRequest(BaseModel):
     email: str
     username: str
     password: str
     role: str = "user"
-    proficiency_level: Optional[str] = None
     native_language_code: Optional[str] = None
 
     @field_validator("password")

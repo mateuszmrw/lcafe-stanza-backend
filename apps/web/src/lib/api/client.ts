@@ -102,7 +102,8 @@ export async function apiClient<T = unknown>(
 /** Multipart upload — skips Content-Type so browser sets boundary automatically */
 export async function apiUpload<T = unknown>(
   path: string,
-  formData: FormData
+  formData: FormData,
+  _retry = false,
 ): Promise<T> {
   const { accessToken } = getAuthStore()
 
@@ -116,6 +117,17 @@ export async function apiUpload<T = unknown>(
     headers,
     body: formData,
   })
+
+  if (res.status === 401 && !_retry) {
+    const newToken = await doRefresh()
+    if (newToken) {
+      return apiUpload<T>(path, formData, true)
+    }
+    if (typeof window !== "undefined") {
+      window.location.href = "/login"
+    }
+    throw new ApiError(401, "Session expired")
+  }
 
   if (!res.ok) {
     let message = res.statusText

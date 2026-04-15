@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_current_user, get_db, get_redis
 from src.api.schemas.vocabulary import BulkStatusUpdate, VocabularyStatusUpdate, VocabularyUpsertRequest, WordListResponse, WordResponse
+from src.domain.stats.cache import invalidate_stats_cache
 from src.infrastructure.db.models.users import User
 from src.infrastructure.db.repositories.anki_repo import AnkiRepository
 from src.infrastructure.db.repositories.word_repo import WordRepository
@@ -29,12 +30,6 @@ class AnkiSyncResponse(BaseModel):
     queued: int
     pending_total: int
 
-
-async def _invalidate_stats_cache(redis: Redis, user_id: uuid.UUID) -> None:
-    """Delete all cached stats entries for this user (any language)."""
-    pattern = f"stats:{user_id}:*"
-    async for key in redis.scan_iter(pattern):
-        await redis.delete(key)
 
 
 @router.get("", response_model=WordListResponse)
@@ -89,7 +84,7 @@ async def upsert_word_status(
         sentence_context=body.sentence_context,
     )
     await session.commit()
-    await _invalidate_stats_cache(redis, current_user.id)
+    await invalidate_stats_cache(redis, current_user.id)
     return WordResponse.model_validate(word)
 
 
@@ -117,7 +112,7 @@ async def batch_upsert_word_status(
     ]
     await _word_repo.batch_upsert_status(session, rows)
     await session.commit()
-    await _invalidate_stats_cache(redis, current_user.id)
+    await invalidate_stats_cache(redis, current_user.id)
 
 
 @router.patch("/bulk", status_code=204)
@@ -130,7 +125,7 @@ async def bulk_update_status(
     """Bulk-update status for multiple words owned by the current user."""
     await _word_repo.bulk_update_status(session, current_user.id, body.ids, body.status)
     await session.commit()
-    await _invalidate_stats_cache(redis, current_user.id)
+    await invalidate_stats_cache(redis, current_user.id)
 
 
 @router.get("/export")
@@ -190,7 +185,7 @@ async def update_word_status(
 
     updated = await _word_repo.update_status(session, word_id, body.status)
     await session.commit()
-    await _invalidate_stats_cache(redis, current_user.id)
+    await invalidate_stats_cache(redis, current_user.id)
     return WordResponse.model_validate(updated)
 
 
@@ -264,8 +259,8 @@ async def sync_to_anki(
         pending_total = await _anki_repo.get_pending_count(session, current_user.id, body.language_id)
         return AnkiSyncResponse(synced=len(all_words), queued=0, pending_total=pending_total)
 
-    except Exception:
-        # AnkiConnect unreachable — queue the words
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError):
+        # AnkiConnect unreachable or returned an error — queue for later retry
         await _anki_repo.mark_pending(session, word_ids)
         await session.commit()
         pending_total = await _anki_repo.get_pending_count(session, current_user.id, body.language_id)
