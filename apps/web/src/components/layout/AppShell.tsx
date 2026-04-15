@@ -31,12 +31,16 @@ export function AppShell({ children }: { children: ReactNode }) {
       )}
 
       {/* Main content */}
-      <main className="relative flex-1 overflow-y-auto min-w-0">
-        {/* Mobile hamburger — floats top-left, hidden on lg+ */}
+      <main
+        className="relative flex-1 overflow-y-auto min-w-0"
+        style={{ paddingTop: "var(--sat)" }}
+      >
+        {/* Mobile hamburger — floats top-left below the status bar, hidden on lg+ */}
         <button
           onClick={() => setSidebarOpen(true)}
           aria-label="Open menu"
-          className="fixed left-3 top-3 z-30 flex items-center justify-center rounded-lg bg-zinc-900/90 p-2.5 text-zinc-400 shadow-lg backdrop-blur-sm lg:hidden"
+          style={{ top: "calc(var(--sat) + 0.75rem)", left: "max(0.75rem, calc(var(--sal) + 0.75rem))" }}
+          className="fixed z-30 flex items-center justify-center rounded-lg bg-zinc-900/90 p-2.5 text-zinc-400 shadow-lg backdrop-blur-sm lg:hidden"
         >
           <Menu className="h-5 w-5" />
         </button>

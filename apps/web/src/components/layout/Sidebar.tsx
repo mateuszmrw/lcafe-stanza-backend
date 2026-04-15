@@ -39,7 +39,10 @@ export function Sidebar({ onClose }: SidebarProps) {
   return (
     <aside className="flex h-screen w-60 flex-col bg-zinc-900 text-zinc-100">
       {/* Logo */}
-      <div className="flex items-center justify-between gap-2 px-5 py-5 border-b border-zinc-800">
+      <div
+        className="flex items-center justify-between gap-2 px-5 pb-5 border-b border-zinc-800"
+        style={{ paddingTop: "calc(var(--sat) + 1.25rem)", paddingLeft: "calc(var(--sal) + 1.25rem)" }}
+      >
         <div className="flex items-center gap-2">
           <BookOpen className="h-6 w-6 text-blue-400" />
           <span className="text-lg font-semibold tracking-tight">Slovo</span>
@@ -100,7 +103,10 @@ export function Sidebar({ onClose }: SidebarProps) {
       </nav>
 
       {/* User section */}
-      <div className="border-t border-zinc-800 px-3 py-4">
+      <div
+        className="border-t border-zinc-800 px-3 pt-4"
+        style={{ paddingBottom: "calc(var(--sab) + 1rem)" }}
+      >
         <div className="flex items-center gap-3 rounded-md px-3 py-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-700 text-xs font-medium text-zinc-200">
             {user?.username?.[0]?.toUpperCase() ?? <User className="h-4 w-4" />}

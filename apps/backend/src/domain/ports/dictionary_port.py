@@ -16,6 +16,9 @@ class DictionaryEntry(BaseModel):
     etymology: str | None = None
     labels: list[str] = []
     frequency: FrequencyInfo | None = None
+    # Source-specific extra data (e.g. accented form, aspect, examples for OpenRussian).
+    # Never used for lookup — only for richer frontend rendering.
+    metadata: dict | None = None
 
 
 class DictionaryPort(ABC):

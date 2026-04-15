@@ -96,7 +96,10 @@ export function DashAudioPlayer({ bookId, pageNumber, onPageEnd }: DashAudioPlay
   }
 
   return (
-    <div className="flex items-center gap-4 border-t border-zinc-800 bg-zinc-900 px-6 py-3">
+    <div
+      className="flex items-center gap-4 border-t border-zinc-800 bg-zinc-900 px-6 pt-3"
+      style={{ paddingBottom: "calc(var(--sab) + 0.75rem)" }}
+    >
       {/* dash.js attaches to an audio element — no src needed, player sets it */}
       <audio
         ref={audioRef}

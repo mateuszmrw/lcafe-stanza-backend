@@ -6,8 +6,10 @@ from src.infrastructure.db.repositories.dictionary_entry_repo import DictionaryE
 _repo = DictionaryEntryRepository()
 
 
-class WiktionaryDbAdapter(DictionaryPort):
+class WiktionaryAdapter(DictionaryPort):
     """DictionaryPort backed by the local dictionary_entries table (bilingual)."""
+
+    source_dict = "wiktionary"
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -27,3 +29,7 @@ class WiktionaryDbAdapter(DictionaryPort):
             )
             for row in rows
         ]
+
+
+# Backward-compat alias — remove once all imports are updated
+WiktionaryDbAdapter = WiktionaryAdapter

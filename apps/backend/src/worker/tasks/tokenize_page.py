@@ -139,19 +139,20 @@ def _build_word_rows(
         if not lemma or lemma in seen:
             continue
         seen.add(lemma)
-        is_propn = auto_ignore_propn and t.get("pos") == "PROPN"
+        pos = t.get("pos") or ""
+        is_ignored = (auto_ignore_propn and pos == "PROPN") or pos == "NUM"
         rows.append({
             "user_id": user_id,
             "language_id": language_id,
             "word": lemma,
             "lemma": lemma,
-            "pos": t.get("pos", ""),
+            "pos": pos,
             "reading": t.get("r", ""),
             "gender": t.get("g", ""),
             "feats": t.get("feats", ""),
             "dep_head": t.get("dep_head", 0),
             "dep_rel": t.get("dep_rel", ""),
-            "status": "ignored" if is_propn else "new",
+            "status": "ignored" if is_ignored else "new",
         })
     return rows
 

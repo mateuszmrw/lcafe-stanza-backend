@@ -61,3 +61,24 @@ class DictionaryEntryRepository:
             return 0
         await session.execute(sa.insert(DictionaryEntry), rows)
         return len(rows)
+
+    async def delete_by_source_dict(
+        self, session: AsyncSession, source_dict: str
+    ) -> int:
+        """Delete all entries belonging to a given dictionary source."""
+        result = await session.execute(
+            sa.delete(DictionaryEntry).where(
+                DictionaryEntry.source_dict == source_dict
+            )
+        )
+        return result.rowcount  # type: ignore[return-value]
+
+    async def count_by_source_dict(
+        self, session: AsyncSession, source_dict: str
+    ) -> int:
+        result = await session.scalar(
+            sa.select(sa.func.count()).select_from(DictionaryEntry).where(
+                DictionaryEntry.source_dict == source_dict
+            )
+        )
+        return result or 0

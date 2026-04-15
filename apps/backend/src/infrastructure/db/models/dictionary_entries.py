@@ -20,7 +20,10 @@ class DictionaryEntry(Base):
     forms: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list)
     etymology: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     labels: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list)
+    source_dict: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default=sa.text("'wiktionary'")
+    )
 
     __table_args__ = (
-        sa.Index("ix_dict_word_bilingual", "word", "source_lang", "target_lang"),
+        sa.Index("ix_dict_word_bilingual", "word", "source_lang", "target_lang", "source_dict"),
     )

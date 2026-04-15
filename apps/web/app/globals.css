@@ -3,6 +3,12 @@
 :root {
   --background: #09090b;
   --foreground: #f4f4f5;
+
+  /* Safe area insets for PWA / notch devices */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
 }
 
 @theme inline {

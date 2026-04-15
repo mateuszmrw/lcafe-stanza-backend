@@ -103,26 +103,65 @@ export interface DictionaryStats {
 export interface DictionaryUploadResult {
   source_lang: string
   target_lang: string
+  source_dict: string
   inserted: number
   deleted: number
+}
+
+export interface DictionarySourceResponse {
+  slug: string
+  name: string
+  description: string | null
+  supported_pairs: { source_lang: string; target_lang: string }[]
+  priority: number
+  is_active: boolean
+  entry_count: number
+}
+
+export interface DictionarySourceUpdate {
+  name?: string
+  description?: string
+  priority?: number
+  is_active?: boolean
 }
 
 export async function getDictionaryStats(): Promise<DictionaryStats[]> {
   return apiClient<DictionaryStats[]>("/admin/dictionary/stats")
 }
 
+export async function getDictionarySources(): Promise<DictionarySourceResponse[]> {
+  return apiClient<DictionarySourceResponse[]>("/admin/dictionary/sources")
+}
+
+export async function updateDictionarySource(
+  slug: string,
+  update: DictionarySourceUpdate
+): Promise<DictionarySourceResponse> {
+  return apiClient<DictionarySourceResponse>(`/admin/dictionary/sources/${slug}`, {
+    method: "PATCH",
+    body: JSON.stringify(update),
+    headers: { "Content-Type": "application/json" },
+  })
+}
+
+export async function deleteDictionarySource(slug: string): Promise<void> {
+  await apiClient<void>(`/admin/dictionary/sources/${slug}`, { method: "DELETE" })
+}
+
 export async function uploadDictionary(
   sourceLang: string,
   targetLang: string,
   file: File,
-  replace = true
+  replace = true,
+  sourceSlug = "wiktionary"
 ): Promise<DictionaryUploadResult> {
   const form = new FormData()
   form.append("file", file)
   const { accessToken } = (await import("@/src/stores/auth")).getAuthStore()
   const { env } = await import("@/src/env")
+  const params = new URLSearchParams({ replace: String(replace), source_slug: sourceSlug })
   const res = await fetch(
-    `${env.apiUrl}/admin/dictionary/upload/${sourceLang}/${targetLang}?replace=${replace}`,
+    `${env.apiUrl}/admin/dictionary/upload/${sourceLang}/${targetLang}?${params}`,
     {
       method: "POST",
       headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},

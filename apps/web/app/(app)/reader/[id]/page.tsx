@@ -216,8 +216,11 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Top bar */}
-      <header className="flex items-center gap-4 border-b border-zinc-800 bg-zinc-900 px-6 py-3">
+      {/* Top bar — pt accounts for the status bar safe area in PWA/fullscreen mode */}
+      <header
+        className="flex items-center gap-4 border-b border-zinc-800 bg-zinc-900 px-6 pb-3"
+        style={{ paddingTop: "calc(var(--sat) + 0.75rem)" }}
+      >
         <Link
           href="/library"
           className="flex items-center gap-1 rounded-md p-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"

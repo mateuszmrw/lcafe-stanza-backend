@@ -18,24 +18,26 @@ export interface DictionaryEntry {
   etymology: string | null
   labels: string[]
   frequency: FrequencyInfo | null
+  /** Source-specific extra data (e.g. accented form, aspect, examples for OpenRussian) */
+  metadata?: Record<string, unknown>
 }
 
-export interface DictionaryProviderResult {
-  provider_slug: string
+export interface DictionaryResultGroup {
+  source_dict: string
   entries: DictionaryEntry[]
 }
 
 export interface DictionaryLookupResponse {
-  results: DictionaryProviderResult[]
+  results: DictionaryResultGroup[]
 }
 
 export async function lookup(
   word: string,
   sourceLang: string,
   targetLang: string,
-  providerSlug?: string
+  dicts?: string   // comma-separated slugs filter, e.g. "wiktionary,openrussian"
 ): Promise<DictionaryLookupResponse> {
   const params = new URLSearchParams({ word, source_lang: sourceLang, target_lang: targetLang })
-  if (providerSlug) params.set("provider_slug", providerSlug)
+  if (dicts) params.set("dicts", dicts)
   return apiClient<DictionaryLookupResponse>(`/dictionary?${params}`)
 }

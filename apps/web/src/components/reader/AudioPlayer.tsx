@@ -168,7 +168,10 @@ export function AudioPlayer({ bookId, totalDurationMs, onPageEnd }: AudioPlayerP
   }
 
   return (
-    <div className="flex items-center gap-4 border-t border-zinc-800 bg-zinc-900 px-6 py-3">
+    <div
+      className="flex items-center gap-4 border-t border-zinc-800 bg-zinc-900 px-6 pt-3"
+      style={{ paddingBottom: "calc(var(--sab) + 0.75rem)" }}
+    >
       <audio
         ref={audioRef}
         src={buildSrc(null)}

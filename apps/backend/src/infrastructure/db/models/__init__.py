@@ -1,5 +1,9 @@
 from src.infrastructure.db.engine import Base
 from src.infrastructure.db.models.audio import SentenceAlignment
+from src.infrastructure.db.models.dictionary_entries import DictionaryEntry
+from src.infrastructure.db.models.dictionary_sources import DictionarySource
+from src.infrastructure.db.models.openrussian import OpenRussianWord
+from src.infrastructure.db.models.cc_cedict import CcCedictEntry
 from src.infrastructure.db.models.tts import TtsSentenceCache
 from src.infrastructure.db.models.content import Book, ContentItem, ContentPage
 from src.infrastructure.db.models.deepl_instances import DeepLInstance
