@@ -21,12 +21,22 @@ def collect_surface_forms(text: str) -> list[str]:
     return [m.group(0).lower() for m in _WORD_RE.finditer(text)]
 
 
-def enrich_page_tokens(text: str, words_map: dict[str, dict]) -> list[TokenWithStatus]:
+def enrich_page_tokens(
+    text: str,
+    words_map: dict[str, dict],
+    lemma_map: dict[str, str] | None = None,
+) -> list[TokenWithStatus]:
     """Convert raw page text into enriched token list using the vocabulary words_map.
 
     Paragraphs are split on double newlines; sentences on single newlines within.
     Punctuation tokens are annotated with status='ignored'.
+
+    lemma_map: surface_form → lemma mapping built at import time. When present,
+    surface forms are translated to lemmas before looking up status in words_map
+    (which is now keyed by lemma). Falls back to surface form for pre-0042 pages
+    or words not present in the map.
     """
+    _lemma_map = lemma_map or {}
     tokens: list[TokenWithStatus] = []
     paragraphs = re.split(r"\n\n+", text)
     global_si = 0
@@ -48,7 +58,10 @@ def enrich_page_tokens(text: str, words_map: dict[str, dict]) -> list[TokenWithS
                         dep_head=0, dep_rel="", status="ignored",
                     ))
                 else:
-                    key = surface.lower()
+                    surface_lower = surface.lower()
+                    # Translate to lemma for DB lookup; fall back to surface form
+                    # for pages imported before migration 0042.
+                    key = _lemma_map.get(surface_lower, surface_lower)
                     word_data = words_map.get(key, {})
                     tokens.append(TokenWithStatus(
                         id=word_data.get("id"),

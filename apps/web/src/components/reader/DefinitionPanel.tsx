@@ -54,12 +54,135 @@ const FEAT_VALUE_LABELS: Record<string, string> = {
   Sing: "Singular", Plur: "Plural", Dual: "Dual",
   Nom: "Nominative", Gen: "Genitive", Dat: "Dative", Acc: "Accusative",
   Ins: "Instrumental", Loc: "Locative", Voc: "Vocative", Par: "Partitive",
+  Abl: "Ablative", Ess: "Essive", Tra: "Translative", Com: "Comitative",
   Past: "Past", Pres: "Present", Fut: "Future",
   Imp: "Imperfective", Perf: "Perfective",
   Anim: "Animate", Inan: "Inanimate",
   Ind: "Indicative", Cnd: "Conditional", Sub: "Subjunctive",
   Act: "Active", Pass: "Passive",
   "1": "1st", "2": "2nd", "3": "3rd",
+}
+
+// Brief description of what each case is used for (language-neutral)
+const CASE_DESCRIPTIONS: Record<string, string> = {
+  Nom: "Subject of the sentence",
+  Gen: "Possession, absence, or quantity",
+  Dat: "Indirect object — recipient",
+  Acc: "Direct object",
+  Ins: "Instrument, accompaniment, or means",
+  Loc: "Location — used with prepositions",
+  Voc: "Direct address",
+  Par: "Partitive — portion of a whole",
+  Abl: "Separation, means, or accompaniment",
+  Ess: "State or condition",
+  Tra: "Change of state or result",
+}
+
+// "What question does this case answer?" — a standard grammar-school mnemonic.
+// Keyed by 2-letter language code, then Stanza case abbreviation.
+const CASE_QUESTIONS: Record<string, Partial<Record<string, string>>> = {
+  ru: {
+    Nom: "Кто? Что?",
+    Gen: "Кого? Чего?",
+    Dat: "Кому? Чему?",
+    Acc: "Кого? Что?",
+    Ins: "Кем? Чем?",
+    Loc: "О ком? О чём?",
+    Voc: "—",
+    Par: "Чего?",
+  },
+  pl: {
+    Nom: "Kto? Co?",
+    Gen: "Kogo? Czego?",
+    Dat: "Komu? Czemu?",
+    Acc: "Kogo? Co?",
+    Ins: "Kim? Czym?",
+    Loc: "O kim? O czym?",
+    Voc: "—",
+  },
+  uk: {
+    Nom: "Хто? Що?",
+    Gen: "Кого? Чого?",
+    Dat: "Кому? Чому?",
+    Acc: "Кого? Що?",
+    Ins: "Ким? Чим?",
+    Loc: "На кому? На чому?",
+    Voc: "—",
+  },
+  cs: {
+    Nom: "Kdo? Co?",
+    Gen: "Koho? Čeho?",
+    Dat: "Komu? Čemu?",
+    Acc: "Koho? Co?",
+    Ins: "Kým? Čím?",
+    Loc: "O kom? O čem?",
+    Voc: "—",
+  },
+  sk: {
+    Nom: "Kto? Čo?",
+    Gen: "Koho? Čoho?",
+    Dat: "Komu? Čomu?",
+    Acc: "Koho? Čo?",
+    Ins: "Kým? Čím?",
+    Loc: "O kom? O čom?",
+    Voc: "—",
+  },
+  sr: { Nom: "Ko? Šta?", Gen: "Koga? Čega?", Dat: "Kome? Čemu?", Acc: "Koga? Šta?", Ins: "Kim? Čim?", Loc: "O kome?" },
+  hr: { Nom: "Tko? Što?", Gen: "Koga? Čega?", Dat: "Komu? Čemu?", Acc: "Koga? Što?", Ins: "Kime? Čime?", Loc: "O kome?" },
+  de: { Nom: "Wer? Was?", Gen: "Wessen?", Dat: "Wem?", Acc: "Wen? Was?" },
+  la: { Nom: "Quis? Quid?", Gen: "Cuius?", Dat: "Cui?", Acc: "Quem? Quid?", Abl: "A quo?", Voc: "O!", Loc: "Ubi?" },
+  fi: { Nom: "Kuka? Mikä?", Gen: "Kenen? Minkä?", Acc: "Kenet? Minkä?", Dat: "Kenelle? Mille?", Abl: "Keneltä? Miltä?", Ess: "Kenä? Minä?", Tra: "Keneksi? Miksi?" },
+  et: { Nom: "Kes? Mis?", Gen: "Kelle? Mille?", Par: "Keda? Mida?" },
+  // Korean: particles mark grammatical role — these are the question words taught alongside them
+  ko: { Nom: "누가? 무엇이?", Gen: "누구의?", Dat: "누구에게?", Acc: "누구를? 무엇을?", Loc: "어디에?", Ins: "무엇으로?" },
+}
+
+// Verb mood descriptions — what the mood signals to the learner
+const MOOD_DESCRIPTIONS: Record<string, string> = {
+  Ind: "Statement of fact or reality",
+  Sub: "Doubt, emotion, necessity, or subjectivity — triggered by certain verbs/conjunctions",
+  Cnd: "Hypothetical or polite — 'would' / 'could'",
+  Imp: "Command or request",
+  Pot: "Possibility — 'can' / 'might'",
+  Des: "Desire or wish",
+  Jus: "Obligation or exhortation",
+}
+
+// Human-readable labels for Universal Dependencies dependency relations.
+// Especially useful for Chinese/Japanese where morphology is minimal.
+const DEP_REL_LABELS: Record<string, string> = {
+  nsubj: "Subject",
+  obj: "Object",
+  iobj: "Indirect object",
+  csubj: "Clausal subject",
+  ccomp: "Clausal complement",
+  xcomp: "Open clausal complement",
+  obl: "Oblique nominal",
+  vocative: "Vocative",
+  dislocated: "Dislocated",
+  advcl: "Adverbial clause",
+  advmod: "Adverbial modifier",
+  discourse: "Discourse element",
+  aux: "Auxiliary",
+  cop: "Copula",
+  mark: "Marker",
+  nmod: "Noun modifier",
+  appos: "Apposition",
+  nummod: "Numeric modifier",
+  amod: "Adjectival modifier",
+  det: "Determiner",
+  clf: "Classifier (measure word)",
+  case: "Case marker / particle",
+  conj: "Conjunction",
+  cc: "Coordinating conjunction",
+  fixed: "Fixed expression",
+  flat: "Flat structure (name, etc.)",
+  compound: "Compound",
+  list: "List",
+  parataxis: "Parataxis",
+  root: "Root (main verb)",
+  dep: "Dependency (unspecified)",
+  punct: "Punctuation",
 }
 
 const LABEL_CLASSES: Record<string, string> = {
@@ -108,11 +231,22 @@ function FrequencyBadge({ freq }: { freq: FrequencyInfo }) {
   )
 }
 
+function extractFeat(feats: string, featName: string): string | null {
+  if (!feats) return null
+  for (const pair of feats.split("|")) {
+    const [key, val] = pair.split("=")
+    if (key === featName) return val ?? null
+  }
+  return null
+}
+
 function parseFeats(feats: string): Array<{ key: string; value: string }> {
   if (!feats) return []
+  // Gender shown in its own field; Case and Mood shown in dedicated blocks below
+  const BLOCK_KEYS = new Set(["Gender", "Case", "Mood"])
   return feats.split("|").flatMap((pair) => {
     const [key, val] = pair.split("=")
-    if (key === "Gender") return []  // shown in the gender field
+    if (BLOCK_KEYS.has(key)) return []
     return [{ key, value: FEAT_VALUE_LABELS[val] ?? val }]
   })
 }
@@ -210,8 +344,8 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSelectionMode, token])
 
-  // Vocabulary key: always surface form (null when in selection-only mode)
-  const surfaceKey = token?.w ?? ""
+  // Vocabulary key: lemma (since migration 0042 the words table is keyed by lemma)
+  const lemmaKey = token?.l || token?.w || ""
   // For translation/dictionary: use lemma when available
   const lookupWord = token ? (token.l || token.w) : ""
   // What to translate: the selection (if any) or the lookup word
@@ -229,7 +363,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
   const statusMutation = useMutation({
     mutationFn: ({ status, hint }: { status: string; hint?: string | null }) =>
       upsertWordStatus({
-        word: surfaceKey,
+        word: lemmaKey,
         status,
         language_id: languageId,
         lemma: token?.l || "",
@@ -258,7 +392,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
             items: old.items.map((p) => ({
               ...p,
               tokens: p.tokens.map((t) =>
-                t.w === surfaceKey ? { ...t, status: newStatus } : t
+                (t.l || t.w) === lemmaKey ? { ...t, status: newStatus } : t
               ),
             })),
           }
@@ -534,28 +668,74 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
             )}
 
             {/* NLP metadata */}
-            {(token.r || token.g || token.f) && (
-              <div className="rounded-lg bg-zinc-800/60 p-3 space-y-2">
-                {token.r && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-xs text-zinc-500">Reading</span>
-                    <span className="text-xs text-zinc-300">{token.r}</span>
-                  </div>
-                )}
-                {token.g && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-xs text-zinc-500">Gender</span>
-                    <span className="text-xs text-zinc-300 capitalize">{token.g}</span>
-                  </div>
-                )}
-                {parseFeats(token.f).map(({ key, value }) => (
-                  <div key={key} className="flex justify-between gap-2">
-                    <span className="text-xs text-zinc-500">{key}</span>
-                    <span className="text-xs text-zinc-300">{value}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            {(token.r || token.g || token.f || token.dep_rel) && (() => {
+              const langCode = languageCode.slice(0, 2)
+              const caseAbbr = extractFeat(token.f, "Case")
+              const caseName = caseAbbr ? (FEAT_VALUE_LABELS[caseAbbr] ?? caseAbbr) : null
+              const caseDesc = caseAbbr ? CASE_DESCRIPTIONS[caseAbbr] : null
+              const caseQuestion = caseAbbr ? (CASE_QUESTIONS[langCode]?.[caseAbbr]) : null
+              const moodAbbr = extractFeat(token.f, "Mood")
+              const moodName = moodAbbr ? (FEAT_VALUE_LABELS[moodAbbr] ?? moodAbbr) : null
+              const moodDesc = moodAbbr ? MOOD_DESCRIPTIONS[moodAbbr] : null
+              const depLabel = token.dep_rel ? DEP_REL_LABELS[token.dep_rel] : null
+              const otherFeats = parseFeats(token.f)
+              return (
+                <div className="space-y-2">
+                  {/* Case block — shown for inflected languages */}
+                  {caseName && (
+                    <div className="rounded-lg bg-zinc-800/60 p-3 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-zinc-200">{caseName}</span>
+                        {caseQuestion && (
+                          <span className="text-xs text-amber-400 font-medium">{caseQuestion}</span>
+                        )}
+                      </div>
+                      {caseDesc && <p className="text-xs text-zinc-500">{caseDesc}</p>}
+                    </div>
+                  )}
+                  {/* Mood block — shown for verbs in French, Spanish, etc. */}
+                  {moodName && (
+                    <div className="rounded-lg bg-zinc-800/60 p-3 space-y-1">
+                      <span className="text-xs font-semibold text-zinc-200">{moodName}</span>
+                      {moodDesc && <p className="text-xs text-zinc-500">{moodDesc}</p>}
+                    </div>
+                  )}
+                  {/* Dependency relation — grammatical role in sentence.
+                      Especially informative for Chinese/Japanese (minimal morphology). */}
+                  {depLabel && token.dep_rel !== "punct" && (
+                    <div className="rounded-lg bg-zinc-800/60 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-zinc-500">Role in sentence</span>
+                        <span className="text-xs text-zinc-300">{depLabel}</span>
+                      </div>
+                    </div>
+                  )}
+                  {/* Reading, gender, other feats */}
+                  {(token.r || token.g || otherFeats.length > 0) && (
+                    <div className="rounded-lg bg-zinc-800/60 p-3 space-y-2">
+                      {token.r && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-xs text-zinc-500">Reading</span>
+                          <span className="text-xs text-zinc-300">{token.r}</span>
+                        </div>
+                      )}
+                      {token.g && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-xs text-zinc-500">Gender</span>
+                          <span className="text-xs text-zinc-300 capitalize">{token.g}</span>
+                        </div>
+                      )}
+                      {otherFeats.map(({ key, value }) => (
+                        <div key={key} className="flex justify-between gap-2">
+                          <span className="text-xs text-zinc-500">{key}</span>
+                          <span className="text-xs text-zinc-300">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
 
             {/* Status buttons */}
             <div>

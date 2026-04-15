@@ -148,10 +148,13 @@ src/
 
 ## Vocabulary / word key rules
 
-- Words are stored by **surface form** (`word.lower().strip()`), not lemma.
-- Unique constraint: `(user_id, language_id, word)`.
+- Words are stored by **lemma** (`token.l.lower().strip()`) since migration 0042. The `word` column stores the lemma value.
+- Unique constraint: `(user_id, language_id, word)` — same index, now keyed by lemma.
+- `content_pages.lemma_map` (JSONB, nullable) holds `{surface_form: lemma}` built at tokenization time.
+- `get_pages` translates surface forms → lemmas via `page.lemma_map` before querying `words` table.
+- `enrich_page_tokens` accepts `lemma_map` param; falls back to surface form for pre-0042 pages (null map).
 - PostgreSQL `INSERT … ON CONFLICT DO UPDATE` for all upserts (single round-trip).
-- Frontend must always send `token.w` (surface form) for status changes — never `token.l` (lemma).
+- Frontend must send `token.l` (lemma) for status changes — **never `token.w`** (surface form).
 
 ## Stanza pipeline
 

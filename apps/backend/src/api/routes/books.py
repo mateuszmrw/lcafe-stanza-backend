@@ -253,22 +253,28 @@ async def get_pages(
 
     pages, total = await _page_repo.get_pages_by_book(session, book_id, page, limit, chapter)
 
-    # Collect unique surface forms only from ready pages (pending pages have no words yet).
-    all_surface_forms: list[str] = []
+    # Collect unique lemmas from ready pages for words_map lookup.
+    # lemma_map (surface → lemma) was built at import time (migration 0042).
+    # Pre-migration pages have lemma_map=None; fall back to surface form as key.
+    all_lemmas: set[str] = set()
     for p in pages:
         if p.status == "ready":
-            all_surface_forms.extend(collect_surface_forms(p.text))
+            lm = p.lemma_map or {}
+            for sf in collect_surface_forms(p.text):
+                all_lemmas.add(lm.get(sf, sf))
 
     words_map = await _word_repo.get_words_map(
         session,
         current_user.id,
         content_item.language_id,
-        list(set(all_surface_forms)),
+        list(all_lemmas),
     )
 
     page_responses: list[PageResponse] = []
     for p in pages:
-        enriched_tokens = enrich_page_tokens(p.text, words_map) if p.status == "ready" else []
+        enriched_tokens = (
+            enrich_page_tokens(p.text, words_map, p.lemma_map) if p.status == "ready" else []
+        )
         page_responses.append(
             PageResponse(
                 id=p.id,

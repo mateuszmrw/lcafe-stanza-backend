@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from typing import Optional
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.infrastructure.db.engine import Base
@@ -87,6 +88,7 @@ class ContentPage(Base):
     xhtml_file: Mapped[Optional[str]] = mapped_column(sa.Text)
     tts_manifest_path: Mapped[Optional[str]] = mapped_column(sa.Text)
     text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    lemma_map: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("'pending'")
     )

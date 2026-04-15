@@ -41,7 +41,11 @@ class WordRepository:
         language_id: int,
         words: list[str],
     ) -> dict[str, dict]:
-        """Return {word: {id, lemma, pos, reading, gender, status}} for the given surface forms."""
+        """Return {lemma: {id, lemma, pos, reading, gender, status}} for the given lemmas.
+
+        Since migration 0042 the words table is keyed by lemma (not surface form).
+        Callers must translate surface forms via the page's lemma_map before calling this.
+        """
         if not words:
             return {}
         result = await session.execute(

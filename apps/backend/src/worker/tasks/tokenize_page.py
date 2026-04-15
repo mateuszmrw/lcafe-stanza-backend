@@ -43,6 +43,13 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
             stanza_client.tokenize_sync, stanza_lang, page.text
         )
 
+        # Build surface → lemma map for read-time enrichment (migration 0042).
+        page.lemma_map = {
+            t["w"].lower().strip(): (t.get("l") or t["w"]).lower().strip()
+            for t in token_dicts
+            if t["w"].strip()
+        }
+
         word_rows = _build_word_rows(
             token_dicts, content_item.user_id, content_item.language_id, auto_ignore_propn
         )
@@ -127,16 +134,17 @@ def _build_word_rows(
     seen: set[str] = set()
     rows: list[dict] = []
     for t in token_dicts:
-        key = t["w"].lower().strip()
-        if not key or key in seen:
+        # Key by lemma; fall back to surface form if Stanza produced no lemma.
+        lemma = (t.get("l") or t["w"]).lower().strip()
+        if not lemma or lemma in seen:
             continue
-        seen.add(key)
+        seen.add(lemma)
         is_propn = auto_ignore_propn and t.get("pos") == "PROPN"
         rows.append({
             "user_id": user_id,
             "language_id": language_id,
-            "word": key,
-            "lemma": t.get("l", ""),
+            "word": lemma,
+            "lemma": lemma,
             "pos": t.get("pos", ""),
             "reading": t.get("r", ""),
             "gender": t.get("g", ""),

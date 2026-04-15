@@ -106,7 +106,7 @@ interface TokenWithStatus {
 
 ## Vocabulary keys
 
-Always use `token.w` (surface form) for vocabulary upserts — **not** `token.l` (lemma). The backend stores words by surface form (`word.lower().strip()`). Using lemma silently misses the word.
+Always use `token.l` (lemma) for vocabulary upserts — **not** `token.w` (surface form). Since migration 0042, the backend stores words by lemma. `DefinitionPanel` uses `lemmaKey = token.l || token.w`. Auto-advance in `reader/[id]/page.tsx` deduplicates and sends by `t.l || t.w`.
 
 ## Status colors
 

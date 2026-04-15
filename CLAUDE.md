@@ -75,7 +75,7 @@ Browser (SSE for real-time import + audio alignment progress)
 
 Read `.claude/ClaudeReference.md` before making structural decisions. The non-negotiable rules:
 
-- **Vocabulary keyed by surface form** (`word.lower().strip()`), not lemma. Unique index: `(user_id, language_id, word)`. Changing this breaks `tokenize_page`, `get_words_map`, `upsert_with_status`, and `DefinitionPanel` simultaneously.
+- **Vocabulary keyed by lemma** (since migration 0042). `words.word` stores `token.l.lower().strip()`. `content_pages.lemma_map` (JSONB) maps `{surface → lemma}` for read-time enrichment. Frontend sends `token.l` for status changes. Pre-0042 pages (lemma_map=null) fall back to surface-form lookup.
 - **StanzaClient is a singleton** — initialized once at startup, never per-request. Current processors: `tokenize,pos,lemma`.
 - **Redis lives in `app.state`** — created in `lifespan`, accessed via `get_redis(request)` and `get_arq_pool(request)` dependencies.
 - **API keys are AES-256 encrypted** in the DB using `db_encryption_key`. Never store plaintext.

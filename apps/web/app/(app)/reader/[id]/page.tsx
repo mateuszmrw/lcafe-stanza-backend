@@ -131,13 +131,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
       p.tokens
         .filter((t) => t.status === "new")
         .filter((t) => {
-          const key = t.w.toLowerCase()
+          const key = (t.l || t.w).toLowerCase()
           if (seen.has(key)) return false
           seen.add(key)
           return true
         })
         .map((t) => ({
-          word: t.w,
+          word: t.l || t.w,
           status: "well_known" as const,
           language_id: languageId,
           lemma: t.l,
