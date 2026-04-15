@@ -1,8 +1,8 @@
-import httpx
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,7 +58,9 @@ async def test_connection(
 ) -> TestConnectionResponse:
     settings = await _repo.get_settings(session)
     if not settings.anki_connect_url:
-        return TestConnectionResponse(success=False, message="No AnkiConnect URL configured")
+        return TestConnectionResponse(
+            success=False, message="No AnkiConnect URL configured"
+        )
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:

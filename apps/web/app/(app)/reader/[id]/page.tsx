@@ -1,14 +1,14 @@
 "use client"
 
-import { useEffect, use, useState } from "react"
+import { useEffect, useCallback, use, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArrowLeft, AlignLeft, List, Mic2, Volume2 } from "lucide-react"
+import { ArrowLeft, AlignLeft, ExternalLink, List, Mic2, Volume2 } from "lucide-react"
 import Link from "next/link"
 import { getBook, getBookPages, type PageListResponse } from "@/src/lib/api/books"
-import { getAlignmentsForPage } from "@/src/lib/api/audio"
-import { getReadingProgress, saveReadingProgress } from "@/src/lib/reading-progress"
-import { batchUpsertWordStatus } from "@/src/lib/api/vocabulary"
+import { getAlignmentsForPage, getTimeIndex } from "@/src/lib/api/audio"
+import { getReadingProgress, saveReadingProgress, getAudioProgress, saveAudioProgress } from "@/src/lib/reading-progress"
+import { batchUpsertWordStatus, recordExposures } from "@/src/lib/api/vocabulary"
 import { useReaderStore } from "@/src/stores/reader"
 import { useAudioPlayerStore } from "@/src/stores/audioPlayer"
 import { useReaderSettings } from "@/src/stores/readerSettings"
@@ -20,6 +20,8 @@ import { SentenceView } from "@/src/components/reader/SentenceView"
 import { KaraokeView } from "@/src/components/reader/KaraokeView"
 import { AudioPlayer } from "@/src/components/reader/AudioPlayer"
 import { DashAudioPlayer } from "@/src/components/reader/DashAudioPlayer"
+import { YouTubePlayer } from "@/src/components/reader/YouTubePlayer"
+import { YouTubeReadingPane } from "@/src/components/reader/YouTubeReadingPane"
 import { AudioUploadPanel } from "@/src/components/books/AudioUploadPanel"
 import { DefinitionPanel } from "@/src/components/reader/DefinitionPanel"
 import { ChapterSidebar } from "@/src/components/reader/ChapterSidebar"
@@ -39,7 +41,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const [viewMode, setViewMode] = useState<ViewMode>("page")
   const [sentenceIndex, setSentenceIndex] = useState(sentenceParam)
   const [showAudioPanel, setShowAudioPanel] = useState(false)
-  const { setAlignments, seekTo } = useAudioPlayerStore()
+  const { setAlignments, seekTo, setTimeIndex, setOnPageChange, clearTimeIndex } = useAudioPlayerStore()
   const { autoMarkRead } = useReaderSettings()
 
   const { data: book, isLoading, isError } = useQuery({
@@ -59,22 +61,57 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
 
   const hasAudio = Boolean(book?.has_audio_overlay && book?.audio_overlay_status === "complete")
   const hasTts = Boolean(book?.tts_status === "complete")
+  const isYouTube = book?.type === "youtube" && book?.status === "completed"
+  const isWebsite = book?.type === "website" && book?.status === "completed"
 
-  // Fetch alignments for current page when audio is ready
-  const { data: alignmentsData } = useQuery({
-    queryKey: ["alignments", id, page],
-    queryFn: () => getAlignmentsForPage(id, page),
-    enabled: hasAudio,
+  // Fetch full time-index for YouTube (binary search for video-driven nav)
+  const { data: timeIndexData } = useQuery({
+    queryKey: ["time-index", id],
+    queryFn: () => getTimeIndex(id),
+    enabled: isYouTube,
     staleTime: Infinity,
   })
 
-  // Sync alignments into audio player store on page change.
-  // Skip when undefined (still loading) to avoid clearing currentAudioFile
-  // which would make AudioPlayer reload the src from position 0.
+  // Load time-index into store and register page-change callback
+  useEffect(() => {
+    if (!timeIndexData) return
+    setTimeIndex(timeIndexData)
+    return () => { clearTimeIndex() }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeIndexData])
+
+  // Register setPage as the callback for video-driven page changes
+  const videoSetPage = useCallback((p: number) => {
+    if (autoMarkRead && book) autoAdvanceNewWords(book.language_id)
+    if (book) recordActivity(book.language_id).catch(() => {})
+    saveReadingProgress(id, p)
+    const params = new URLSearchParams(searchParams)
+    params.set("page", String(p))
+    params.delete("sentence")
+    router.replace(`/reader/${id}?${params}`, { scroll: false })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, searchParams, router, autoMarkRead, book])
+
+  useEffect(() => {
+    if (isYouTube) {
+      setOnPageChange(videoSetPage)
+      return () => { setOnPageChange(null) }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isYouTube, videoSetPage])
+
+  // Fetch per-page alignments for SMIL/EPUB audio (not YouTube)
+  const { data: alignmentsData } = useQuery({
+    queryKey: ["alignments", id, page],
+    queryFn: () => getAlignmentsForPage(id, page),
+    enabled: hasAudio && !isYouTube,
+    staleTime: Infinity,
+  })
+
+  // Sync per-page alignments into audio player store on page change (SMIL only).
   useEffect(() => {
     if (!alignmentsData) return
     setAlignments(alignmentsData)
-    // If audio is playing, seek to the first sentence of the new page
     if (alignmentsData.length > 0) {
       const { isPlaying } = useAudioPlayerStore.getState()
       if (isPlaying) {
@@ -84,6 +121,30 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alignmentsData])
+
+  // Save YouTube video position (throttled to every 3 seconds)
+  useEffect(() => {
+    if (!isYouTube) return
+    let lastSave = 0
+    const unsub = useAudioPlayerStore.subscribe((state) => {
+      const now = Date.now()
+      if (state.currentTimeMs > 0 && now - lastSave > 3000) {
+        lastSave = now
+        saveAudioProgress(id, state.currentTimeMs, null)
+      }
+    })
+    return unsub
+  }, [isYouTube, id])
+
+  // Restore YouTube video position on mount
+  useEffect(() => {
+    if (!isYouTube || !timeIndexData?.length) return
+    const saved = getAudioProgress(id)
+    if (saved && saved.timeMs > 0) {
+      seekTo(saved.timeMs)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isYouTube, timeIndexData])
 
   const sentences = groupBySentence(pageData?.items[0]?.tokens ?? [])
 
@@ -159,6 +220,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     )
     if (items.length > 0) {
       batchUpsertWordStatus(items).catch(() => {})
+      recordExposures(items.map((i) => i.word), languageId).catch(() => {})
     }
   }
 
@@ -209,6 +271,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
 
   const totalPages = book.page_count ?? 1
   const language = book.language_code
+  const usesContinuousScroll = isYouTube
 
   function handleAudioPageEnd() {
     if (page < totalPages) setPage(page + 1)
@@ -231,38 +294,53 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
         <h1 className="flex-1 truncate text-sm font-semibold text-zinc-200">
           {book.title}
         </h1>
+        {book.source_url && (
+          <a
+            href={book.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open original"
+            className="rounded p-1 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-300"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        )}
         <Badge variant="zinc" className="capitalize">{language}</Badge>
-        <span className="text-xs text-zinc-500">
-          {page} / {totalPages}
-        </span>
+        {!isYouTube && (
+          <span className="text-xs text-zinc-500">
+            {page} / {totalPages}
+          </span>
+        )}
 
-        {/* View mode toggle */}
-        <div className="flex rounded-lg border border-zinc-700 bg-zinc-800 p-0.5">
-          <button
-            onClick={() => setViewMode("page")}
-            title="Page view"
-            className={`rounded p-1.5 transition ${viewMode === "page" ? "bg-zinc-600 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
-          >
-            <List className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={() => { setViewMode("sentence"); setSentenceIndex(0) }}
-            title="Sentence view"
-            className={`rounded p-1.5 transition ${viewMode === "sentence" ? "bg-zinc-600 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
-          >
-            <AlignLeft className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={() => setViewMode("karaoke")}
-            title="Karaoke view"
-            className={`rounded p-1.5 transition ${viewMode === "karaoke" ? "bg-zinc-600 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
-          >
-            <Mic2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        {/* View mode toggle — not for YouTube */}
+        {!isYouTube && !isWebsite && (
+          <div className="flex rounded-lg border border-zinc-700 bg-zinc-800 p-0.5">
+            <button
+              onClick={() => setViewMode("page")}
+              title="Page view"
+              className={`rounded p-1.5 transition ${viewMode === "page" ? "bg-zinc-600 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
+            >
+              <List className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => { setViewMode("sentence"); setSentenceIndex(0) }}
+              title="Sentence view"
+              className={`rounded p-1.5 transition ${viewMode === "sentence" ? "bg-zinc-600 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
+            >
+              <AlignLeft className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => setViewMode("karaoke")}
+              title="Karaoke view"
+              className={`rounded p-1.5 transition ${viewMode === "karaoke" ? "bg-zinc-600 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
+            >
+              <Mic2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
-        {/* Audio panel toggle — only for completed books */}
-        {book.status === "completed" && (
+        {/* Audio panel toggle — only for completed books, not YouTube */}
+        {!isYouTube && !isWebsite && book.status === "completed" && (
           <button
             onClick={() => setShowAudioPanel((v) => !v)}
             title="Audio"
@@ -273,92 +351,125 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
         )}
       </header>
 
-      {/* Progress bar */}
-      <div className="h-0.5 w-full bg-zinc-800">
-        <div
-          className="h-full bg-blue-500 transition-all duration-300"
-          style={{ width: `${Math.round((page / totalPages) * 100)}%` }}
-        />
-      </div>
+      {/* Progress bar — not for YouTube */}
+      {!isYouTube && (
+        <div className="h-0.5 w-full bg-zinc-800">
+          <div
+            className="h-full bg-blue-500 transition-all duration-300"
+            style={{ width: `${Math.round((page / totalPages) * 100)}%` }}
+          />
+        </div>
+      )}
 
       {/* Audio upload panel (collapsed by default) */}
-      {showAudioPanel && book.status === "completed" && (
+      {showAudioPanel && !isYouTube && !isWebsite && book.status === "completed" && (
         <div className="border-b border-zinc-800 bg-zinc-900/80 px-6 py-3">
           <AudioUploadPanel book={book} />
         </div>
       )}
 
       {/* Main area */}
-      <div className="flex flex-1 overflow-hidden">
-        {viewMode === "page" && (
-          <ChapterSidebar bookId={id} currentPage={page} onPageChange={setPage} />
-        )}
-
-        <div className="flex-1 overflow-hidden">
-          {viewMode === "page" ? (
-            <ReadingPane
+      {isYouTube || usesContinuousScroll ? (
+        /* YouTube / short website: continuous scroll */
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {isYouTube && book.video_id && <YouTubePlayer videoId={book.video_id} />}
+          <div className="flex flex-1 overflow-hidden">
+            <YouTubeReadingPane
               bookId={id}
-              page={page}
               totalPages={totalPages}
               languageCode={language}
-              onPageChange={setPage}
             />
-          ) : viewMode === "karaoke" ? (
-            <KaraokeView
-              bookId={id}
-              page={page}
-              languageCode={language}
+            {(activeToken || selectedText) && (
+              <DefinitionPanel
+                token={activeToken}
+                language={language}
+                languageId={book.language_id}
+                languageCode={language}
+                bookId={book.id}
+                currentPage={page}
+                register={book.register}
+                readerConfig={readerConfig}
+              />
+            )}
+          </div>
+        </div>
+      ) : (
+        /* Books + websites: paginated reading pane */
+        <div className="flex flex-1 overflow-hidden">
+          {viewMode === "page" && !isWebsite && (
+            <ChapterSidebar bookId={id} currentPage={page} onPageChange={setPage} />
+          )}
+          <div className="flex-1 overflow-hidden">
+            {viewMode === "page" ? (
+              <ReadingPane
+                bookId={id}
+                page={page}
+                totalPages={totalPages}
+                languageCode={language}
+                onPageChange={setPage}
+                onFinish={() => {
+                  if (autoMarkRead && book) autoAdvanceNewWords(book.language_id)
+                  if (book) recordActivity(book.language_id).catch(() => {})
+                  queryClient.invalidateQueries({ queryKey: ["books"] })
+                  router.push("/library")
+                }}
+              />
+            ) : viewMode === "karaoke" ? (
+              <KaraokeView
+                bookId={id}
+                page={page}
+                languageCode={language}
+                languageId={book.language_id}
+              />
+            ) : (
+              <SentenceView
+                sentences={sentences}
+                currentIndex={sentenceIndex}
+                totalPages={totalPages}
+                page={page}
+                languageCode={language}
+                languageId={book.language_id}
+                bookId={id}
+                activeToken={activeToken}
+                onAdvance={advanceSentence}
+                onBack={backSentence}
+                onNextPage={() => setPage(page + 1)}
+                onPrevPage={() => setPage(page - 1)}
+                onTokenClick={(token, e) => {
+                  if (activeToken?.w === token.w && activeToken?.si === token.si) {
+                    setActiveToken(null)
+                    setPanelAnchor(null)
+                    setSentenceContext(null)
+                  } else {
+                    setActiveToken(token)
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    setPanelAnchor({ x: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom })
+                    const sentenceTokens = sentences.find(s => s.length > 0 && s[0].si === token.si) ?? []
+                    setSentenceContext(sentenceTokens.filter(t => t.pos !== "PUNCT").map(t => t.w).join(" ").trim() || null, sentenceTokens)
+                  }
+                }}
+              />
+            )}
+          </div>
+          {(activeToken || selectedText) && (
+            <DefinitionPanel
+              token={activeToken}
+              language={language}
               languageId={book.language_id}
-            />
-          ) : (
-            <SentenceView
-              sentences={sentences}
-              currentIndex={sentenceIndex}
-              totalPages={totalPages}
-              page={page}
               languageCode={language}
-              languageId={book.language_id}
-              bookId={id}
-              activeToken={activeToken}
-              onAdvance={advanceSentence}
-              onBack={backSentence}
-              onNextPage={() => setPage(page + 1)}
-              onPrevPage={() => setPage(page - 1)}
-              onTokenClick={(token, e) => {
-                if (activeToken?.w === token.w && activeToken?.si === token.si) {
-                  setActiveToken(null)
-                  setPanelAnchor(null)
-                  setSentenceContext(null)
-                } else {
-                  setActiveToken(token)
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  setPanelAnchor({ x: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom })
-                  const sentenceTokens = sentences.find(s => s.length > 0 && s[0].si === token.si) ?? []
-                  setSentenceContext(sentenceTokens.filter(t => t.pos !== "PUNCT").map(t => t.w).join(" ").trim() || null)
-                }
-              }}
+              bookId={book.id}
+              currentPage={page}
+              register={book.register}
+              readerConfig={readerConfig}
             />
           )}
         </div>
-
-        {(activeToken || selectedText) && (
-          <DefinitionPanel
-            token={activeToken}
-            language={language}
-            languageId={book.language_id}
-            languageCode={language}
-            bookId={book.id}
-            currentPage={page}
-            register={book.register}
-            readerConfig={readerConfig}
-          />
-        )}
-      </div>
+      )}
 
       {hasAudio && (
         <AudioPlayer bookId={id} totalDurationMs={book.audio_duration_ms} onPageEnd={handleAudioPageEnd} />
       )}
-      {!hasAudio && hasTts && (
+      {!hasAudio && !isYouTube && hasTts && (
         <DashAudioPlayer bookId={id} pageNumber={page} onPageEnd={handleAudioPageEnd} />
       )}
     </div>

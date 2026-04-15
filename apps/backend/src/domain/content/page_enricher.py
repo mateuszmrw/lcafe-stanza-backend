@@ -77,6 +77,7 @@ def enrich_page_tokens(
                         dep_rel=word_data.get("dep_rel", ""),
                         hint=word_data.get("hint"),
                         status=word_data.get("status", "new"),
+                        d=word_data.get("difficulty_score"),
                     ))
             global_si += 1
 

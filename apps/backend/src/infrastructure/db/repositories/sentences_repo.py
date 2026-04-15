@@ -17,6 +17,7 @@ class SavedSentenceRepository:
         sentence_text: str,
         sentence_index: int,
         book_id: uuid.UUID | None = None,
+        tokens: list[dict] | None = None,
     ) -> SavedSentence:
         sentence = SavedSentence(
             user_id=user_id,
@@ -24,6 +25,7 @@ class SavedSentenceRepository:
             sentence_text=sentence_text,
             sentence_index=sentence_index,
             book_id=book_id,
+            tokens=tokens,
         )
         session.add(sentence)
         await session.flush()

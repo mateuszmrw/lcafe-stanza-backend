@@ -2,7 +2,7 @@
 
 import type { TokenWithStatus } from "@/src/lib/api/books"
 import { cn } from "@/src/lib/cn"
-import { STATUS_CLASSES } from "@/src/lib/status-colors"
+import { getTokenClass } from "@/src/lib/status-colors"
 
 const NON_WORD_POS = new Set(["PUNCT", "SPACE", "SYM"])
 
@@ -47,7 +47,7 @@ export function WordToken({
       onKeyDown={(e) => e.key === "Enter" && onClick(token, e as unknown as React.MouseEvent<HTMLSpanElement>)}
       className={cn(
         "inline-flex flex-col items-center rounded text-base leading-relaxed transition-colors",
-        STATUS_CLASSES[token.status] ?? STATUS_CLASSES.new,
+        getTokenClass(token.status, token.d),
         isActive && "ring-2 ring-blue-400 ring-offset-1 ring-offset-zinc-950",
         isHighlighted && "bg-blue-400/25 ring-1 ring-inset ring-blue-300/60",
         isAudioActive && "underline decoration-amber-400 decoration-2 underline-offset-2",

@@ -57,6 +57,20 @@ class Word(Base):
     anki_pending: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, server_default=sa.text("false")
     )
+    exposure_count: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("0")
+    )
+    difficulty_score: Mapped[Optional[int]] = mapped_column(
+        sa.Integer, nullable=True
+    )
+    source_page_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("content_pages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_sentence_index: Mapped[Optional[int]] = mapped_column(
+        sa.Integer, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
     )

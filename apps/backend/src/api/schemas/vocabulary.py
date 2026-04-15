@@ -17,6 +17,8 @@ class WordResponse(BaseModel):
     sentence_context: Optional[str] = None
     language_id: int
     lookup_count: int
+    exposure_count: int = 0
+    difficulty_score: Optional[int] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

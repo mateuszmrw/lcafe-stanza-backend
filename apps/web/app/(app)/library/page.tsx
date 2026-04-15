@@ -78,7 +78,7 @@ export default function LibraryPage() {
       // Keep polling while any book is processing
       const books = query.state.data?.items ?? []
       return books.some((b) => b.status === "processing" || b.status === "pending")
-        ? 5000
+        ? 2000
         : false
     },
   })
@@ -142,7 +142,7 @@ export default function LibraryPage() {
             Your library is empty
           </h2>
           <p className="mb-6 text-sm text-zinc-500">
-            Import an EPUB file to start reading and learning vocabulary.
+            Import an EPUB, PDF, or YouTube video to start reading and learning vocabulary.
           </p>
           <button
             onClick={() => setImportOpen(true)}

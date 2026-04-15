@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.infrastructure.db.engine import Base
@@ -29,6 +30,7 @@ class SavedSentence(Base):
     )
     sentence_index: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     sentence_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    tokens: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
     )

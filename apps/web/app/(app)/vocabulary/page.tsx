@@ -49,6 +49,19 @@ const POS_OPTIONS = [
   { value: "PART", label: "Particle" },
 ]
 
+function DifficultyBadge({ score }: { score: number | null | undefined }) {
+  if (score == null) return <span className="text-xs text-zinc-600">—</span>
+  const color =
+    score >= 70 ? "bg-red-500/20 text-red-400" :
+    score >= 30 ? "bg-amber-500/20 text-amber-400" :
+    "bg-emerald-500/20 text-emerald-400"
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>
+      {score}
+    </span>
+  )
+}
+
 // ─── Words tab ────────────────────────────────────────────────────────────────
 
 function WordsTab({ languageId }: { languageId: number }) {
@@ -244,6 +257,7 @@ function WordsTab({ languageId }: { languageId: number }) {
               <th className="px-4 py-3 text-left font-medium text-zinc-400">Lemma</th>
               <th className="px-4 py-3 text-left font-medium text-zinc-400">POS</th>
               <th className="px-4 py-3 text-left font-medium text-zinc-400">Status</th>
+              <th className="px-4 py-3 text-left font-medium text-zinc-400">Difficulty</th>
               <th className="px-4 py-3 text-left font-medium text-zinc-400">Added</th>
             </tr>
           </thead>
@@ -256,6 +270,7 @@ function WordsTab({ languageId }: { languageId: number }) {
                     <td className="px-4 py-3"><div className="h-4 w-20 rounded bg-zinc-800" /></td>
                     <td className="px-4 py-3"><div className="h-4 w-12 rounded bg-zinc-800" /></td>
                     <td className="px-4 py-3"><div className="h-5 w-16 rounded-full bg-zinc-800" /></td>
+                    <td className="px-4 py-3"><div className="h-4 w-10 rounded bg-zinc-800" /></td>
                     <td className="px-4 py-3"><div className="h-4 w-20 rounded bg-zinc-800" /></td>
                   </tr>
                 ))
@@ -288,6 +303,9 @@ function WordsTab({ languageId }: { languageId: number }) {
                           {word.status.replace("_", " ")}
                         </Badge>
                       </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      <DifficultyBadge score={word.difficulty_score} />
                     </td>
                     <td className="px-4 py-3 text-xs text-zinc-500">
                       {new Date(word.created_at).toLocaleDateString()}

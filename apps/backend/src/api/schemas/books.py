@@ -19,6 +19,7 @@ class TokenWithStatus(BaseModel):
     dep_rel: str = ""   # Universal Dependency relation label, e.g. "nsubj", "obj"
     hint: Optional[str] = None
     status: str = "new"
+    d: Optional[int] = None  # difficulty score 0-100
 
 
 class BookUploadResponse(BaseModel):
@@ -36,6 +37,7 @@ class BookListItem(BaseModel):
     word_count: Optional[int]
     language_id: int
     created_at: datetime
+    coverage_pct: Optional[int] = None
 
     model_config = {"from_attributes": True}
 
@@ -47,6 +49,7 @@ class BookListResponse(BaseModel):
 
 class BookDetailResponse(BaseModel):
     id: uuid.UUID
+    type: str = "book"
     title: str
     description: Optional[str]
     register: Optional[str] = None
@@ -62,6 +65,8 @@ class BookDetailResponse(BaseModel):
     has_audio_overlay: bool = False
     audio_overlay_status: str = "none"
     tts_status: str = "none"
+    video_id: Optional[str] = None
+    source_url: Optional[str] = None
 
 
 class PageResponse(BaseModel):

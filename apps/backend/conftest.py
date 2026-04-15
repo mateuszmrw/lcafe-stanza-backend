@@ -33,6 +33,8 @@ _session_factory = async_sessionmaker(_engine, expire_on_commit=False, class_=As
 # Tables to truncate, ordered to respect FK constraints (children first)
 _TRUNCATE_TABLES = [
     "content_pages",
+    "youtube_subtitles",
+    "youtube_videos",
     "words",
     "books",
     "content_items",

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useMemo, useState } from "react"
 import { X, Loader2, AlertTriangle, ArrowLeft, BrainCircuit, Volume2, Copy, Check } from "lucide-react"
 import type { PageListResponse, TokenWithStatus } from "@/src/lib/api/books"
+import { AnnotatedSentence } from "./AnnotatedSentence"
 import { upsertWordStatus } from "@/src/lib/api/vocabulary"
 import { translate, getTranslationAvailable } from "@/src/lib/api/translation"
 import { lookup, type FrequencyInfo, type WordForm } from "@/src/lib/api/dictionary"
@@ -661,11 +662,12 @@ function extractFeat(feats: string, featName: string): string | null {
 
 function parseFeats(feats: string): Array<{ key: string; value: string }> {
   if (!feats) return []
-  // Gender shown in its own field; Case and Mood shown in dedicated blocks below
+  // Gender, Case, Mood shown in dedicated blocks; only show these remaining useful feats
   const BLOCK_KEYS = new Set(["Gender", "Case", "Mood"])
+  const SHOW_KEYS = new Set(["Number", "Tense", "Aspect", "Voice"])
   return feats.split("|").flatMap((pair) => {
     const [key, val] = pair.split("=")
-    if (BLOCK_KEYS.has(key)) return []
+    if (BLOCK_KEYS.has(key) || !SHOW_KEYS.has(key)) return []
     return [{ key, value: FEAT_VALUE_LABELS[val] ?? val }]
   })
 }
@@ -685,6 +687,10 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
   const cfg: ReaderConfig = readerConfig ?? READER_CONFIG_DEFAULTS
   const { clearActive, setActiveToken, setSelectedText, activeToken, selectedText, selectedTokens, panelAnchor, sentenceContext } = useReaderStore()
   const queryClient = useQueryClient()
+
+  // Tab state for word mode (LingQ-style)
+  type WordTab = "info" | "grammar" | "dictionary"
+  const [wordTab, setWordTab] = useState<WordTab>("info")
 
   // Copy-to-clipboard state
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
@@ -803,6 +809,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
       }
 
       queryClient.invalidateQueries({ queryKey: ["vocabulary"] })
+      queryClient.invalidateQueries({ queryKey: ["books"] })
 
       queryClient.setQueriesData<PageListResponse>(
         { queryKey: ["book-pages"] },
@@ -840,27 +847,30 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
   const posLabel = token?.pos ? (POS_LABELS[token.pos] ?? token.pos) : null
 
   /**
-   * On tablet (768–1023px), position the floating card near the tapped word
-   * or text selection. Phone and desktop breakpoints are handled by CSS only.
+   * Position the floating card near the tapped word.
+   * Phone: centered floating popup below/above the word.
+   * Tablet: same floating behavior.
+   * Desktop (lg+): handled by CSS (inline side panel).
    */
   const anchorStyle = useMemo((): React.CSSProperties => {
     if (!panelAnchor || typeof window === "undefined") return {}
     const w = window.innerWidth
-    if (w < 768 || w >= 1024) return {}
+    if (w >= 1024) return {} // desktop uses CSS side panel
 
-    const PANEL_W = 320
+    const PANEL_W = Math.min(w - 24, 340) // 12px margin each side
     const GAP = 8
     const spaceBelow = window.innerHeight - panelAnchor.bottom - GAP
+    const maxH = Math.min(window.innerHeight * 0.55, 420)
 
     const top =
-      spaceBelow >= 160
+      spaceBelow >= maxH
         ? panelAnchor.bottom + GAP
-        : Math.max(GAP, panelAnchor.top - Math.min(window.innerHeight * 0.7, 480) - GAP)
+        : Math.max(GAP, panelAnchor.top - maxH - GAP)
 
     let left = panelAnchor.x - PANEL_W / 2
-    left = Math.max(GAP, Math.min(left, w - PANEL_W - GAP))
+    left = Math.max(12, Math.min(left, w - PANEL_W - 12))
 
-    return { top, left, bottom: "auto" }
+    return { top, left, width: PANEL_W, maxHeight: maxH, bottom: "auto" }
   }, [panelAnchor])
 
   // Hoisted so both the NLP card and the forms table can use it
@@ -879,22 +889,15 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
         className={cn(
           // Base: flex column, dark bg, fixed overlay
           "flex flex-col bg-zinc-900 fixed z-40",
-          // Phone (<md): full-width bottom drawer
-          "inset-x-0 bottom-0 rounded-t-2xl max-h-[75vh]",
-          // Tablet (md–lg): floating card — position set by anchorStyle above;
-          // CSS only handles visual appearance + resets phone inset
-          "md:inset-x-auto md:bottom-auto md:w-80 md:rounded-2xl md:max-h-[70vh] md:shadow-2xl md:ring-1 md:ring-zinc-800",
+          // Phone + tablet (<lg): floating card near the word, positioned by anchorStyle
+          "rounded-2xl shadow-2xl ring-1 ring-zinc-800",
           // Desktop (lg+): inline side panel — not fixed, full height
           "lg:relative lg:inset-auto lg:z-auto lg:h-full lg:w-80 lg:rounded-none lg:ring-0 lg:border-l lg:border-zinc-800 lg:max-h-none lg:shadow-none"
         )}
       >
-        {/* Drag handle — phone only */}
-        <div className="flex justify-center pt-3 pb-1 md:hidden">
-          <div className="h-1 w-10 rounded-full bg-zinc-700" />
-        </div>
 
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-zinc-800 p-4">
+        <div className="flex items-start justify-between border-b border-zinc-800 p-3 md:p-4">
         {isSelectionMode ? (
           /* Selection mode header */
           <div className="min-w-0 flex-1 pr-2">
@@ -955,10 +958,29 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-5">
+      <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-5">
         {isSelectionMode ? (
           /* ── Selection mode body ── */
           <>
+            {/* Grammar annotation for selected phrase */}
+            {selectedTokens && selectedTokens.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  Grammar
+                </p>
+                <AnnotatedSentence
+                  tokens={selectedTokens.map((t) => ({
+                    w: t.w,
+                    pos: t.pos,
+                    feats: t.f,
+                    dep_head: t.dep_head ?? 0,
+                    dep_rel: t.dep_rel ?? "",
+                  }))}
+                  languageCode={languageCode?.slice(0, 2)}
+                />
+              </div>
+            )}
+
             {isOverLimit ? (
               <div className="flex items-start gap-2 rounded-lg bg-amber-900/20 p-3 text-xs text-amber-400">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -1072,25 +1094,179 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
             </p>
           </>
         ) : token ? (
-          /* ── Word mode body ── */
+          /* ── Word mode body — tabbed layout ── */
           <>
-            {/* Sentence context — compact quote */}
-            {sentenceContext && (
-              <div className="flex items-start gap-2">
-                <div className="mt-0.5 w-0.5 shrink-0 self-stretch rounded-full bg-zinc-700" />
-                <p className="text-xs text-zinc-500 leading-relaxed italic flex-1">{sentenceContext}</p>
+            {/* Tab bar */}
+            <div className="flex rounded-lg bg-zinc-800/60 p-0.5 gap-0.5">
+              {(["info", "grammar", "dictionary"] as const).map((tab) => (
                 <button
-                  onClick={() => copyToClipboard(sentenceContext, "context")}
-                  className="shrink-0 rounded p-0.5 text-zinc-700 transition hover:text-zinc-400"
-                  aria-label="Copy sentence"
+                  key={tab}
+                  onClick={() => setWordTab(tab)}
+                  className={cn(
+                    "flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition capitalize",
+                    wordTab === tab
+                      ? "bg-zinc-700 text-zinc-100 shadow-sm"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  )}
                 >
-                  {copiedKey === "context" ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                  {tab === "info" ? "Info" : tab === "grammar" ? "Grammar" : "Dictionary"}
                 </button>
-              </div>
+              ))}
+            </div>
+
+            {/* ── Tab: Info (status + translation + sentence context) ── */}
+            {wordTab === "info" && (
+              <>
+                {/* Sentence context — plain text quote, clamped on mobile */}
+                {sentenceContext && (
+                  <div className="flex items-start gap-2">
+                    <div className="mt-0.5 w-0.5 shrink-0 self-stretch rounded-full bg-zinc-700" />
+                    <p className="text-xs text-zinc-500 leading-relaxed italic flex-1 line-clamp-2 md:line-clamp-none">{sentenceContext}</p>
+                    <button
+                      onClick={() => copyToClipboard(sentenceContext, "context")}
+                      className="shrink-0 rounded p-0.5 text-zinc-700 transition hover:text-zinc-400"
+                      aria-label="Copy sentence"
+                    >
+                      {copiedKey === "context" ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                    </button>
+                  </div>
+                )}
+
+                {/* Status buttons */}
+                <div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {STATUSES.map((s) => (
+                      <button
+                        key={s.value}
+                        disabled={statusMutation.isPending}
+                        onClick={() => statusMutation.mutate({ status: s.value })}
+                        className={cn(
+                          "rounded-md px-2.5 py-1 text-xs font-medium text-white transition",
+                          s.color,
+                          token.status === s.value && "ring-2 ring-white/40",
+                        )}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Translation */}
+                {translationEnabled && (
+                  <div>
+                    {translationLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
+                    ) : translationError ? (
+                      <p className="text-xs text-red-400">Translation unavailable</p>
+                    ) : translationData && translationData.results.length > 0 ? (
+                      <div className="space-y-2">
+                        {translationData.results.map((r) => (
+                          <div key={r.target_lang}>
+                            {translationData.results.length > 1 && (
+                              <p className="mb-0.5 text-xs text-zinc-500">
+                                {getLanguageLabel(r.target_lang)}
+                              </p>
+                            )}
+                            <div className="space-y-0.5">
+                              {r.translated_texts.map((t, i) => (
+                                <div key={i} className="flex items-center gap-1.5">
+                                  <p className="flex-1 text-sm text-zinc-200">{t}</p>
+                                  <button
+                                    onClick={() => copyToClipboard(t, `trans-${r.target_lang}-${i}`)}
+                                    className="shrink-0 rounded p-0.5 text-zinc-600 transition hover:text-zinc-300"
+                                    aria-label="Copy translation"
+                                  >
+                                    {copiedKey === `trans-${r.target_lang}-${i}` ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                        {(() => {
+                          const firstTranslation = translationData.results[0]?.translated_texts[0]
+                          if (!firstTranslation) return null
+                          return (
+                            <button
+                              onClick={() => {
+                                statusMutation.mutate({ status: "learning", hint: firstTranslation })
+                                setHintSaved(true)
+                                setTimeout(() => setHintSaved(false), 2000)
+                              }}
+                              disabled={statusMutation.isPending}
+                              className={cn(
+                                "mt-1 flex w-full items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition",
+                                hintSaved
+                                  ? "border-emerald-700 bg-emerald-900/30 text-emerald-400"
+                                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                              )}
+                            >
+                              {hintSaved ? "Saved as hint · Learning" : "Save translation + Learning"}
+                            </button>
+                          )
+                        })()}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
+                {/* Synonyms */}
+                <div>
+                  {synonymsMutation.isIdle && (
+                    <button
+                      onClick={() => synonymsMutation.mutate()}
+                      className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 transition"
+                    >
+                      <BrainCircuit className="h-3.5 w-3.5" />
+                      Find synonyms
+                    </button>
+                  )}
+                  {synonymsMutation.isPending && (
+                    <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
+                  )}
+                  {synonymsMutation.isError && (
+                    <p className="text-xs text-red-400">
+                      {synonymsMutation.error.message.includes("503")
+                        ? "No LLM provider configured."
+                        : "Synonym lookup failed. Try again."}
+                    </p>
+                  )}
+                  {synonymsMutation.data && synonymsMutation.data.synonyms.length > 0 && (
+                    <div className="space-y-2">
+                      {synonymsMutation.data.synonyms.map((s, i) => (
+                        <div key={i} className="rounded-lg bg-zinc-800 p-3 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-zinc-100">{s.word}</span>
+                            <span className={cn(
+                              "rounded px-1.5 py-0.5 text-xs capitalize",
+                              LABEL_CLASSES[s.register.toLowerCase()] ?? "bg-zinc-700/60 text-zinc-400"
+                            )}>
+                              {s.register}
+                            </span>
+                          </div>
+                          <p className="text-xs text-zinc-400 leading-relaxed">{s.nuance}</p>
+                          {s.example && (
+                            <p className="text-xs text-zinc-500 italic">{s.example}</p>
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => synonymsMutation.reset()}
+                        className="text-xs text-zinc-600 hover:text-zinc-400 transition"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
 
-            {/* NLP metadata */}
-            {(token.r || token.g || token.f || token.dep_rel) && (() => {
+            {/* ── Tab: Grammar (NLP metadata) ── */}
+            {wordTab === "grammar" && (
+              <>
+                {(token.r || token.g || token.f || token.dep_rel) && (() => {
               const langCode = languageCode.slice(0, 2)
               const caseName = caseAbbr ? (FEAT_VALUE_LABELS[caseAbbr] ?? caseAbbr) : null
               const caseDesc = caseAbbr ? CASE_DESCRIPTIONS[caseAbbr] : null
@@ -1100,7 +1276,6 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
               const moodDesc = moodAbbr ? MOOD_DESCRIPTIONS[moodAbbr] : null
               const depLabel = token.dep_rel ? DEP_REL_LABELS[token.dep_rel] : null
               const otherFeats = parseFeats(token.f)
-              // Collect all rows for the single NLP card, gated by readerConfig
               const nlpRows: Array<{ label: string; value: string; highlight?: string }> = []
               if (cfg.show_case && caseName) {
                 nlpRows.push({
@@ -1127,7 +1302,6 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
                   nlpRows.push({ label: key, value })
                 }
               }
-
               if (nlpRows.length === 0) return null
               return (
                 <div className="rounded-lg bg-zinc-800/60 divide-y divide-zinc-700/50">
@@ -1147,149 +1321,14 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
                 </div>
               )
             })()}
-
-            {/* Status buttons */}
-            <div>
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Status
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {STATUSES.map((s) => (
-                  <button
-                    key={s.value}
-                    disabled={statusMutation.isPending}
-                    onClick={() => statusMutation.mutate({ status: s.value })}
-                    className={cn(
-                      "rounded-md px-2.5 py-1 text-xs font-medium text-white transition",
-                      s.color,
-                      token.status === s.value && "ring-2 ring-white/40",
-                    )}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Translation */}
-            {translationEnabled && (
-              <div>
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                  Translation
-                </p>
-                {translationLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
-                ) : translationError ? (
-                  <p className="text-xs text-red-400">Translation unavailable</p>
-                ) : translationData && translationData.results.length > 0 ? (
-                  <div className="space-y-2">
-                    {translationData.results.map((r) => (
-                      <div key={r.target_lang}>
-                        {translationData.results.length > 1 && (
-                          <p className="mb-0.5 text-xs text-zinc-500">
-                            {getLanguageLabel(r.target_lang)}
-                          </p>
-                        )}
-                        <div className="space-y-0.5">
-                          {r.translated_texts.map((t, i) => (
-                            <div key={i} className="flex items-center gap-1.5">
-                              <p className="flex-1 text-sm text-zinc-200">{t}</p>
-                              <button
-                                onClick={() => copyToClipboard(t, `trans-${r.target_lang}-${i}`)}
-                                className="shrink-0 rounded p-0.5 text-zinc-600 transition hover:text-zinc-300"
-                                aria-label="Copy translation"
-                              >
-                                {copiedKey === `trans-${r.target_lang}-${i}` ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                    {/* Save first translation as hint + set to Learning */}
-                    {(() => {
-                      const firstTranslation = translationData.results[0]?.translated_texts[0]
-                      if (!firstTranslation) return null
-                      return (
-                        <button
-                          onClick={() => {
-                            statusMutation.mutate({ status: "learning", hint: firstTranslation })
-                            setHintSaved(true)
-                            setTimeout(() => setHintSaved(false), 2000)
-                          }}
-                          disabled={statusMutation.isPending}
-                          className={cn(
-                            "mt-1 flex w-full items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition",
-                            hintSaved
-                              ? "border-emerald-700 bg-emerald-900/30 text-emerald-400"
-                              : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
-                          )}
-                        >
-                          {hintSaved ? "Saved as hint · Learning" : "Save translation + Learning"}
-                        </button>
-                      )
-                    })()}
-                  </div>
-                ) : null}
-              </div>
+              </>
             )}
 
-            {/* Synonyms */}
+            {/* ── Tab: Dictionary ── */}
+            {wordTab === "dictionary" && (
+              <>
+                {(defsLoading || (lookupData && lookupData.results.length > 0)) && (
             <div>
-              {synonymsMutation.isIdle && (
-                <button
-                  onClick={() => synonymsMutation.mutate()}
-                  className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 transition"
-                >
-                  <BrainCircuit className="h-3.5 w-3.5" />
-                  Find synonyms
-                </button>
-              )}
-              {synonymsMutation.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
-              )}
-              {synonymsMutation.isError && (
-                <p className="text-xs text-red-400">
-                  {synonymsMutation.error.message.includes("503")
-                    ? "No LLM provider configured."
-                    : "Synonym lookup failed. Try again."}
-                </p>
-              )}
-              {synonymsMutation.data && synonymsMutation.data.synonyms.length > 0 && (
-                <div className="space-y-2">
-                  {synonymsMutation.data.synonyms.map((s, i) => (
-                    <div key={i} className="rounded-lg bg-zinc-800 p-3 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-zinc-100">{s.word}</span>
-                        <span className={cn(
-                          "rounded px-1.5 py-0.5 text-xs capitalize",
-                          LABEL_CLASSES[s.register.toLowerCase()] ?? "bg-zinc-700/60 text-zinc-400"
-                        )}>
-                          {s.register}
-                        </span>
-                      </div>
-                      <p className="text-xs text-zinc-400 leading-relaxed">{s.nuance}</p>
-                      {s.example && (
-                        <p className="text-xs text-zinc-500 italic">{s.example}</p>
-                      )}
-                    </div>
-                  ))}
-                  <button
-                    onClick={() => synonymsMutation.reset()}
-                    className="text-xs text-zinc-600 hover:text-zinc-400 transition"
-                  >
-                    Clear
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Dictionary — only render when there's content */}
-            {(defsLoading || (lookupData && lookupData.results.length > 0)) && (
-            <div>
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Dictionary
-              </p>
               {defsLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
               ) : lookupData && lookupData.results.length > 0 ? (
@@ -1360,6 +1399,8 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
                 </div>
               ) : null}
             </div>
+            )}
+              </>
             )}
           </>
         ) : null}

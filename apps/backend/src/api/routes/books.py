@@ -6,18 +6,31 @@ import uuid
 import zipfile
 from typing import AsyncGenerator
 
+import sqlalchemy as sa
 from arq import ArqRedis
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
-import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from fastapi import Query, Request
 from src.api.dependencies import get_arq_pool, get_current_user, get_db, get_redis
-from src.domain.auth.services.jwt import decode_token
-from src.api.schemas.audio import AudioStatusResponse, SentenceAlignmentResponse, TtsStatusResponse
+from src.api.schemas.audio import (
+    AudioStatusResponse,
+    SentenceAlignmentResponse,
+    TimeIndexEntry,
+    TimeIndexResponse,
+    TtsStatusResponse,
+)
 from src.api.schemas.books import (
     BookDetailResponse,
     BookListItem,
@@ -26,11 +39,12 @@ from src.api.schemas.books import (
     ChapterSummary,
     PageListResponse,
     PageResponse,
-    TokenWithStatus,
 )
 from src.core.config import get_settings
+from src.domain.auth.services.jwt import decode_token
 from src.domain.content.page_enricher import collect_surface_forms, enrich_page_tokens
 from src.domain.content.service import ContentService
+from src.domain.coverage.service import CoverageService
 from src.domain.nlp.services.book_chunker import BookChunker
 from src.domain.nlp.services.book_parser import BookParser
 from src.domain.nlp.services.pdf_parser import PdfParser
@@ -43,6 +57,7 @@ from src.infrastructure.db.repositories.word_repo import WordRepository
 
 router = APIRouter(prefix="/books", tags=["books"])
 _content_service = ContentService()
+_coverage_service = CoverageService()
 _page_repo = ContentPageRepository()
 _word_repo = WordRepository()
 _audio_repo = AudioRepository()
@@ -61,9 +76,13 @@ async def upload_book(
     redis: Redis = Depends(get_redis),
 ) -> BookUploadResponse:
     if current_user.active_language_id is None:
-        raise HTTPException(status_code=400, detail="Set an active language before importing books")
+        raise HTTPException(
+            status_code=400, detail="Set an active language before importing books"
+        )
     if language_id != current_user.active_language_id:
-        raise HTTPException(status_code=400, detail="Book language must match your active language")
+        raise HTTPException(
+            status_code=400, detail="Book language must match your active language"
+        )
 
     settings = get_settings()
     content = await file.read(settings.max_upload_bytes + 1)
@@ -93,7 +112,9 @@ async def upload_book(
         except HTTPException:
             raise
         except zipfile.BadZipFile:
-            raise HTTPException(status_code=400, detail="Uploaded file is not a valid PDF or EPUB")
+            raise HTTPException(
+                status_code=400, detail="Uploaded file is not a valid PDF or EPUB"
+            )
         file_extension = "epub"
 
     file_hash = hashlib.sha256(content).hexdigest()
@@ -189,14 +210,27 @@ async def upload_book(
 async def list_books(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> BookListResponse:
     items = await _content_service.list_books(
         session, current_user.id, language_id=current_user.active_language_id
     )
-    return BookListResponse(
-        items=[BookListItem.model_validate(item) for item in items],
-        total=len(items),
+
+    # Compute vocabulary coverage for completed books
+    completed_ids = [item.id for item in items if item.status == "completed"]
+    coverage_map = await _coverage_service.compute_book_coverages(
+        session, redis, current_user.id,
+        current_user.active_language_id or 0,
+        completed_ids,
     )
+
+    book_items = []
+    for item in items:
+        bi = BookListItem.model_validate(item)
+        bi.coverage_pct = coverage_map.get(item.id)
+        book_items.append(bi)
+
+    return BookListResponse(items=book_items, total=len(items))
 
 
 @router.get("/{book_id}", response_model=BookDetailResponse)
@@ -212,14 +246,22 @@ async def get_book(
     book = await session.get(Book, book_id)
     language = await session.get(Language, content_item.language_id)
     page_count = await session.scalar(
-        sa.select(sa.func.count()).select_from(ContentPage).where(
-            ContentPage.content_item_id == book_id
-        )
+        sa.select(sa.func.count())
+        .select_from(ContentPage)
+        .where(ContentPage.content_item_id == book_id)
     )
+
+    video_id: str | None = None
+    if content_item.type == "youtube":
+        from src.infrastructure.db.models.youtube import YouTubeVideo
+
+        yt = await session.get(YouTubeVideo, book_id)
+        video_id = yt.video_id if yt else None
 
     has_audio = bool(book and book.audio_file_path)
     return BookDetailResponse(
         id=content_item.id,
+        type=content_item.type,
         title=content_item.title,
         description=content_item.description,
         register=content_item.register,
@@ -235,6 +277,8 @@ async def get_book(
         has_audio_overlay=book.has_audio_overlay if book else False,
         audio_overlay_status=book.audio_overlay_status if book else "none",
         tts_status=book.tts_status if book else "none",
+        video_id=video_id,
+        source_url=content_item.source_url,
     )
 
 
@@ -251,7 +295,9 @@ async def get_pages(
     if not content_item or content_item.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    pages, total = await _page_repo.get_pages_by_book(session, book_id, page, limit, chapter)
+    pages, total = await _page_repo.get_pages_by_book(
+        session, book_id, page, limit, chapter
+    )
 
     # Collect unique lemmas from ready pages for words_map lookup.
     # lemma_map (surface → lemma) was built at import time (migration 0042).
@@ -273,7 +319,9 @@ async def get_pages(
     page_responses: list[PageResponse] = []
     for p in pages:
         enriched_tokens = (
-            enrich_page_tokens(p.text, words_map, p.lemma_map) if p.status == "ready" else []
+            enrich_page_tokens(p.text, words_map, p.lemma_map)
+            if p.status == "ready"
+            else []
         )
         page_responses.append(
             PageResponse(
@@ -405,13 +453,21 @@ async def get_audio_status(
         raise HTTPException(status_code=404, detail="Book not found")
 
     from src.infrastructure.db.models.audio import SentenceAlignment
-    sentences_aligned = await session.scalar(
-        sa.select(sa.func.count()).where(
-            SentenceAlignment.page_id.in_(
-                sa.select(ContentPage.id).where(ContentPage.content_item_id == book_id)
+
+    sentences_aligned = (
+        await session.scalar(
+            sa.select(sa.func.count())
+            .where(
+                SentenceAlignment.page_id.in_(
+                    sa.select(ContentPage.id).where(
+                        ContentPage.content_item_id == book_id
+                    )
+                )
             )
-        ).select_from(SentenceAlignment)
-    ) or 0
+            .select_from(SentenceAlignment)
+        )
+        or 0
+    )
 
     return AudioStatusResponse(
         has_audio_overlay=book.has_audio_overlay,
@@ -434,7 +490,7 @@ async def stream_audio_status(
     if not raw_token:
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
-            raw_token = auth_header[len("Bearer "):]
+            raw_token = auth_header[len("Bearer ") :]
 
     user_id: uuid.UUID | None = None
     if raw_token:
@@ -482,8 +538,13 @@ async def stream_audio_status(
 async def stream_audio(
     book_id: uuid.UUID,
     request: Request,
-    token: str | None = Query(default=None, description="JWT token (for <audio> elements that cannot set headers)"),
-    file_path: str | None = Query(default=None, description="Storage-relative path to a specific audio file"),
+    token: str | None = Query(
+        default=None,
+        description="JWT token (for <audio> elements that cannot set headers)",
+    ),
+    file_path: str | None = Query(
+        default=None, description="Storage-relative path to a specific audio file"
+    ),
     session: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Stream audio file.
@@ -493,13 +554,14 @@ async def stream_audio(
     Falls back to book.audio_file_path when file_path is not given.
     """
     import jwt as pyjwt
+
     current_user: User | None = None
 
     raw_token = token
     if not raw_token:
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
-            raw_token = auth_header[len("Bearer "):]
+            raw_token = auth_header[len("Bearer ") :]
 
     if raw_token:
         try:
@@ -592,6 +654,7 @@ async def delete_audio(
     audio_dir = os.path.join(settings.storage_root, "books", str(book_id), "audio")
     if os.path.isdir(audio_dir):
         import shutil
+
         try:
             shutil.rmtree(audio_dir)
         except OSError:
@@ -633,6 +696,25 @@ async def get_page_alignments(
     return [SentenceAlignmentResponse(**a) for a in alignments]
 
 
+@router.get("/{book_id}/time-index", response_model=TimeIndexResponse)
+async def get_time_index(
+    book_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> TimeIndexResponse:
+    """Return a flat sorted array of all sentence alignments for a book.
+
+    Used by the frontend to drive video-synced reading: binary search on
+    start_ms gives O(log N) page + sentence lookup on every playback tick.
+    """
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    rows = await _audio_repo.get_time_index(session, book_id)
+    return TimeIndexResponse(index=[TimeIndexEntry(**r) for r in rows])
+
+
 # ---------------------------------------------------------------------------
 # TTS routes
 # ---------------------------------------------------------------------------
@@ -658,7 +740,9 @@ async def generate_tts(
         raise HTTPException(status_code=404, detail="Book not found")
 
     if book.tts_status in ("in_progress", "pending"):
-        raise HTTPException(status_code=409, detail="TTS generation already in progress")
+        raise HTTPException(
+            status_code=409, detail="TTS generation already in progress"
+        )
 
     book.tts_status = "pending"
     await session.commit()
@@ -681,18 +765,26 @@ async def get_tts_status(
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    pages_total = await session.scalar(
-        sa.select(sa.func.count()).select_from(ContentPage).where(
-            ContentPage.content_item_id == book_id
+    pages_total = (
+        await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ContentPage)
+            .where(ContentPage.content_item_id == book_id)
         )
-    ) or 0
+        or 0
+    )
 
-    pages_ready = await session.scalar(
-        sa.select(sa.func.count()).select_from(ContentPage).where(
-            ContentPage.content_item_id == book_id,
-            ContentPage.tts_manifest_path.is_not(None),
+    pages_ready = (
+        await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ContentPage)
+            .where(
+                ContentPage.content_item_id == book_id,
+                ContentPage.tts_manifest_path.is_not(None),
+            )
         )
-    ) or 0
+        or 0
+    )
 
     return TtsStatusResponse(
         tts_status=book.tts_status,
@@ -718,7 +810,7 @@ async def serve_tts_file(
     if not raw_token:
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
-            raw_token = auth_header[len("Bearer "):]
+            raw_token = auth_header[len("Bearer ") :]
 
     user_id: uuid.UUID | None = None
     if raw_token:

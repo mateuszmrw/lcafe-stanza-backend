@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Project: Slovo
 
-Self-hosted language learning platform (LingQ-clone). Users upload EPUB/PDF books, the backend tokenizes them with Stanza NLP, and the reader lets them look up words, track vocabulary statuses, get translations, grammar explanations, and synonym nuance. Includes EPUB3 audiobook support (SMIL overlays), on-demand TTS generation, reading streaks, Anki sync, and word frequency coverage stats.
+Self-hosted language learning platform (LingQ-clone). Users upload EPUB/PDF books, YouTube videos, or website articles. The backend tokenizes content with Stanza NLP, and the reader lets them look up words, track vocabulary statuses, get translations, grammar explanations, and synonym nuance. Includes EPUB3 audiobook support (SMIL overlays), YouTube video sync with subtitles, on-demand TTS generation, website article import (trafilatura), reading streaks, Anki sync, and word frequency coverage stats.
 
 **Monorepo layout:**
 - `apps/backend/` — FastAPI + Stanza + ARQ worker (Python 3.12, `uv`)
@@ -60,16 +60,22 @@ PostgreSQL — books, pages, vocabulary, users, alignments, phrases, activity, s
     ↓ ARQ job queue
 Redis (:6379) — job queue + SSE pub/sub + rate limiting + stats cache (5 min TTL)
     ↓ worker tasks
-ARQ worker — tokenize_page, align_smil_audio, generate_tts_audio
-    ↓ Stanza NLP / Qwen TTS
+ARQ worker — tokenize_page, align_smil_audio, generate_tts_audio, import_youtube_subtitles
+    ↓ Stanza NLP / Qwen TTS / yt-dlp / trafilatura
 Browser (SSE for real-time import + audio alignment progress)
 ```
 
+**Content types:**
+- **Books** — EPUB/PDF upload → chunk → tokenize → paginated reader
+- **YouTube** — yt-dlp subtitle fetch → chunk → tokenize → video-synced continuous scroll reader (ADR-010, ADR-011)
+- **Website** — trafilatura article extraction → chunk → tokenize → paginated reader (no chapters sidebar)
+
 **External services:**
 - DeepL API — translation (multi-instance: multiple source→target pairs in `deepl_instances` table)
-- Wiktionary — dictionary lookups (pre-imported from dump via `/admin/dictionary`)
+- Wiktionary + OpenRussian + CC-CEDICT + dict.cc + KRDict — dictionary lookups (pre-imported via admin)
 - OpenAI / Claude — grammar explanation and synonym nuance (LLM cascade: DB system key → env var)
 - Qwen TTS — text-to-speech generation for books without embedded audio
+- YouTube (yt-dlp) — video metadata + subtitle extraction
 
 ## Critical design decisions
 
@@ -81,6 +87,14 @@ Read `.claude/ClaudeReference.md` before making structural decisions. The non-ne
 - **API keys are AES-256 encrypted** in the DB using `db_encryption_key`. Never store plaintext.
 - **Token version** (`users.token_version`) is bumped on each login to invalidate other sessions.
 - **All DB access goes through repository classes** — no raw SQLAlchemy in route handlers.
+- **ContentItem is polymorphic** — `type` field: `"book"`, `"youtube"`, `"website"`. `list_books()` filters all three. YouTube has `youtube_videos` join table; websites use `source_url` column on `content_items`.
+- **YouTube time-index sync** (ADR-011) — `GET /books/{id}/time-index` returns flat sorted array of all sentence alignments. Frontend loads once, binary search on tick for O(log N) page + sentence lookup. Page changes debounced (2 consecutive ticks).
+- **Anki sync uses custom "Slovo" model** — 10-field note model (Word, POS, Gender, Reading, Morphology, Definition, Hint, SentenceContext, FrequencyTier, Audio). Auto-created via AnkiConnect. Deck naming: `{username}::{LanguageName}`. Audio clips from EPUB audiobooks via ffmpeg at sync time. Dictionary definitions and frequency tiers batch-fetched. Words track `source_page_id` + `source_sentence_index` (since migration 0051) for audio lookup.
+- **Book coverage preview** — library cards show "You know X%" for completed books. `CoverageService` computes per-book coverage (unique lemmas from `lemma_map` vs user's known/learning/well_known vocab). Redis-cached 5 min, invalidated alongside stats cache on vocabulary mutations.
+- **Word difficulty scoring** — per-word score 0-100 combining frequency rank (0.3), inflection form count (0.3), and personal lookup/exposure ratio (0.4). Stored on `words.difficulty_score`, recomputed on page engagement + word lookup. Minimum 3 exposures before scoring. Reader tokens vary color intensity by difficulty. Vocabulary list has difficulty column with color-coded badges.
+- **Grammar annotation** — phrase/selection view in DefinitionPanel shows table of tokens with dep_rel color + role label + case. Localized labels (en/ru/de/pl). `saved_sentences.tokens` JSONB stores annotation at save time. Word view shows grammar on a separate tab (not inline).
+- **DefinitionPanel UX** — word mode uses 3 tabs (LingQ-style): Info (status + translation + synonyms), Grammar (case, mood, dep_rel, feats), Dictionary (definitions + forms). On mobile/tablet: floating popup near the tapped word (~55% viewport height, dismissible via backdrop). On desktop: inline side panel. NLP feats filtered to useful subset (Number, Tense, Aspect, Voice only).
+- **Reader "Finish" button** — last page shows "Finish" instead of disabled "Next". Auto-advances words, records activity, invalidates coverage cache, navigates to library.
 
 ## Environment variables (`.env` in `apps/backend/`)
 

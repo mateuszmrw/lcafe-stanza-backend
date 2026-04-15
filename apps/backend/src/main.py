@@ -1,6 +1,10 @@
 import logging
 import os
+import warnings
 from contextlib import asynccontextmanager
+
+# "register" is a valid domain field (language register) that shadows BaseModel.register
+warnings.filterwarnings("ignore", message="Field name \"register\".*shadows an attribute in parent")
 from typing import AsyncGenerator
 
 from arq import create_pool
@@ -29,6 +33,8 @@ from src.api.routes import synonyms as synonyms_router
 from src.api.routes import translation as translation_router
 from src.api.routes import users as users_router
 from src.api.routes import vocabulary as vocabulary_router
+from src.api.routes import website as website_router
+from src.api.routes import youtube as youtube_router
 from src.api.routes.admin import anki as admin_anki_router
 from src.api.routes.admin import data as admin_data_router
 from src.api.routes.admin import deepl_instances as admin_deepl_instances_router
@@ -40,6 +46,7 @@ from src.api.routes.admin import providers as admin_providers_router
 from src.api.routes.admin import system_keys as admin_system_keys_router
 from src.api.routes.admin import tts as admin_tts_router
 from src.api.routes.admin import users as admin_users_router
+from src.api.routes.admin import youtube as admin_youtube_router
 from src.core import get_settings
 
 settings = get_settings()
@@ -83,6 +90,8 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(stats_router.router)
     app.include_router(sentences_router.router)
     app.include_router(activity_router.router)
+    app.include_router(youtube_router.router)
+    app.include_router(website_router.router)
     app.include_router(admin_languages_router.router)
     app.include_router(admin_providers_router.router)
     app.include_router(admin_users_router.router)
@@ -94,6 +103,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(admin_frequencies_router.router)
     app.include_router(admin_tts_router.router)
     app.include_router(admin_anki_router.router)
+    app.include_router(admin_youtube_router.router)
     app.include_router(setup_router.router)
 
 

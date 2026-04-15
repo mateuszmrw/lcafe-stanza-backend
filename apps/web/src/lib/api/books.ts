@@ -8,9 +8,11 @@ export interface BookListItem {
   word_count: number | null
   language_id: number
   created_at: string
+  coverage_pct: number | null
 }
 
 export interface BookDetail extends BookListItem {
+  type: string
   chapter_count: number | null
   page_count: number | null
   language_code: string
@@ -20,6 +22,8 @@ export interface BookDetail extends BookListItem {
   has_audio_overlay: boolean
   audio_overlay_status: string
   tts_status: "none" | "pending" | "in_progress" | "complete" | "failed"
+  video_id: string | null
+  source_url: string | null
 }
 
 export interface TokenWithStatus {
@@ -36,6 +40,7 @@ export interface TokenWithStatus {
   dep_rel?: string   // Universal Dependency relation label, e.g. "nsubj", "obj"
   hint?: string | null
   status: "new" | "learning" | "known" | "ignored" | "well_known"
+  d?: number | null  // difficulty score 0-100
 }
 
 export interface PageResponse {

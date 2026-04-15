@@ -16,6 +16,20 @@ export interface SentenceAlignment {
   audio_file: string | null
 }
 
+export interface TimeIndexEntry {
+  page_number: number
+  sentence_index: number
+  start_ms: number
+  end_ms: number
+}
+
+export async function getTimeIndex(
+  bookId: string
+): Promise<TimeIndexEntry[]> {
+  const res = await apiClient<{ index: TimeIndexEntry[] }>(`/books/${bookId}/time-index`)
+  return res.index
+}
+
 export async function getAlignmentsForPage(
   bookId: string,
   page: number

@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react"
 import type { TokenWithStatus } from "@/src/lib/api/books"
 import { getBookPages } from "@/src/lib/api/books"
 import { useReaderStore } from "@/src/stores/reader"
@@ -94,9 +94,10 @@ interface ReadingPaneProps {
   totalPages: number
   languageCode: string
   onPageChange: (page: number) => void
+  onFinish?: () => void
 }
 
-export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChange }: ReadingPaneProps) {
+export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChange, onFinish }: ReadingPaneProps) {
   const noWordSpacing = isNoSpaceLanguage(languageCode)
   const { activeToken, setActiveToken, setSelectedText, setPanelAnchor, setSentenceContext } = useReaderStore()
   const { activeSentenceIndex, seekToSentence, seekTo } = useAudioPlayerStore()
@@ -245,7 +246,7 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
       // Extract sentence context for DefinitionPanel and Anki
       if (currentPage) {
         const sentenceTokens = currentPage.tokens.filter((t) => t.si === token.si)
-        setSentenceContext(sentenceText(sentenceTokens, noWordSpacing))
+        setSentenceContext(sentenceText(sentenceTokens, noWordSpacing), sentenceTokens)
       }
     }
 
@@ -313,14 +314,23 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
           <span className="text-sm text-zinc-500">Page {page} of {totalPages}</span>
           <PageOptionsMenu />
         </div>
-        <button
-          onClick={() => onPageChange(page + 1)}
-          disabled={page >= totalPages}
-          className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30"
-        >
-          Next
-          <ChevronRight className="h-4 w-4" />
-        </button>
+        {page >= totalPages ? (
+          <button
+            onClick={onFinish}
+            className="flex items-center gap-1.5 rounded-lg bg-emerald-600/20 px-3 py-2 text-sm font-medium text-emerald-400 transition hover:bg-emerald-600/30"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            Finish
+          </button>
+        ) : (
+          <button
+            onClick={() => onPageChange(page + 1)}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+          >
+            Next
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        )}
       </div>
     </div>
   )

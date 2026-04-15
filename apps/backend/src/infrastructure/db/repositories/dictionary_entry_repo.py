@@ -19,6 +19,27 @@ class DictionaryEntryRepository:
         )
         return list(result.scalars().all())
 
+    async def batch_lookup(
+        self, session: AsyncSession, words: list[str], source_lang: str, target_lang: str
+    ) -> dict[str, str]:
+        """Return {word: first_gloss} for all matching words in one query."""
+        if not words:
+            return {}
+        result = await session.execute(
+            sa.select(DictionaryEntry.word, DictionaryEntry.glosses).where(
+                DictionaryEntry.word.in_(words),
+                DictionaryEntry.source_lang == source_lang,
+                DictionaryEntry.target_lang == target_lang,
+            )
+        )
+        definitions: dict[str, str] = {}
+        for row in result:
+            if row.word not in definitions and row.glosses:
+                glosses = row.glosses if isinstance(row.glosses, list) else []
+                if glosses:
+                    definitions[row.word] = "; ".join(str(g) for g in glosses[:3])
+        return definitions
+
     async def list_language_pairs(
         self, session: AsyncSession
     ) -> list[tuple[str, str, int]]:

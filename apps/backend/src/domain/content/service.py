@@ -70,13 +70,33 @@ class ContentService:
     ) -> list[ContentItem]:
         query = (
             sa.select(ContentItem)
-            .where(ContentItem.user_id == user_id, ContentItem.type == "book")
+            .where(ContentItem.user_id == user_id, ContentItem.type.in_(["book", "youtube", "website"]))
             .order_by(ContentItem.created_at.desc())
         )
         if language_id is not None:
             query = query.where(ContentItem.language_id == language_id)
         result = await session.execute(query)
         return list(result.scalars().all())
+
+    async def create_website_import(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        language_id: int,
+        title: str,
+        source_url: str,
+    ) -> ContentItem:
+        content_item = ContentItem(
+            user_id=user_id,
+            language_id=language_id,
+            type="website",
+            title=title,
+            source_url=source_url,
+            status="pending",
+        )
+        session.add(content_item)
+        await session.flush()
+        return content_item
 
     async def delete_book(
         self, session: AsyncSession, content_item_id: uuid.UUID

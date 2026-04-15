@@ -6,6 +6,7 @@ from src.core.config import get_settings
 from src.infrastructure.stanza.client import StanzaConfig, get_stanza_client
 from src.worker.tasks.align_smil_audio import align_smil_audio
 from src.worker.tasks.generate_tts_audio import generate_tts_audio
+from src.worker.tasks.import_youtube_subtitles import import_youtube_subtitles
 from src.worker.tasks.tokenize_page import tokenize_page
 
 logging.basicConfig(
@@ -35,7 +36,7 @@ async def shutdown(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [tokenize_page, align_smil_audio, generate_tts_audio]
+    functions = [import_youtube_subtitles, tokenize_page, align_smil_audio, generate_tts_audio]
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 4

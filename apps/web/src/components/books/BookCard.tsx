@@ -61,6 +61,21 @@ export function BookCard({ book, onDelete }: BookCardProps) {
         {book.title}
       </h3>
 
+      {/* Coverage bar */}
+      {book.status === "completed" && book.coverage_pct != null && (
+        <div className="mb-2">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs text-zinc-400">You know {book.coverage_pct}%</span>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-zinc-800">
+            <div
+              className="h-full rounded-full bg-emerald-500/70 transition-all duration-500"
+              style={{ width: `${book.coverage_pct}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="mt-auto flex items-center justify-between pt-2">
         <div className="flex items-center gap-2">
           <Badge variant={badge.variant}>{badge.label}</Badge>

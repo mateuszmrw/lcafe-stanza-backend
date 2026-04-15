@@ -86,6 +86,57 @@ class AudioRepository:
             for row in result
         ]
 
+    async def get_alignment_for_sentence(
+        self, session: AsyncSession, page_id: uuid.UUID, sentence_index: int
+    ) -> dict | None:
+        """Return a single alignment for a specific page + sentence, or None."""
+        result = await session.execute(
+            sa.select(
+                SentenceAlignment.audio_start_ms,
+                SentenceAlignment.audio_end_ms,
+                SentenceAlignment.audio_file,
+            )
+            .where(
+                SentenceAlignment.page_id == page_id,
+                SentenceAlignment.sentence_index == sentence_index,
+            )
+            .limit(1)
+        )
+        row = result.one_or_none()
+        if not row:
+            return None
+        return {
+            "audio_start_ms": row.audio_start_ms,
+            "audio_end_ms": row.audio_end_ms,
+            "audio_file": row.audio_file,
+        }
+
+    async def get_time_index(
+        self, session: AsyncSession, book_id: uuid.UUID
+    ) -> list[dict]:
+        from src.infrastructure.db.models.content import ContentPage
+
+        result = await session.execute(
+            sa.select(
+                ContentPage.page_number,
+                SentenceAlignment.sentence_index,
+                SentenceAlignment.audio_start_ms,
+                SentenceAlignment.audio_end_ms,
+            )
+            .join(ContentPage, ContentPage.id == SentenceAlignment.page_id)
+            .where(ContentPage.content_item_id == book_id)
+            .order_by(ContentPage.page_number, SentenceAlignment.sentence_index)
+        )
+        return [
+            {
+                "page_number": row.page_number,
+                "sentence_index": row.sentence_index,
+                "start_ms": row.audio_start_ms,
+                "end_ms": row.audio_end_ms,
+            }
+            for row in result
+        ]
+
     async def delete_alignments_for_book(
         self, session: AsyncSession, book_id: uuid.UUID
     ) -> None:

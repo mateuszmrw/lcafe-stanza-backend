@@ -32,6 +32,7 @@ class ContentItem(Base):
     )
     error_message: Mapped[Optional[str]] = mapped_column(sa.Text)
     register: Mapped[Optional[str]] = mapped_column(sa.Text)
+    source_url: Mapped[Optional[str]] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
     )

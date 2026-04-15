@@ -14,11 +14,20 @@ router = APIRouter(prefix="/sentences", tags=["sentences"])
 _repo = SavedSentenceRepository()
 
 
+class SentenceToken(BaseModel):
+    w: str
+    pos: str = ""
+    feats: str = ""
+    dep_head: int = 0
+    dep_rel: str = ""
+
+
 class SaveSentenceRequest(BaseModel):
     language_id: int
     sentence_text: str
     sentence_index: int
     book_id: Optional[uuid.UUID] = None
+    tokens: Optional[list[SentenceToken]] = None
 
 
 class SavedSentenceResponse(BaseModel):
@@ -27,6 +36,7 @@ class SavedSentenceResponse(BaseModel):
     sentence_text: str
     sentence_index: int
     book_id: Optional[uuid.UUID]
+    tokens: Optional[list[SentenceToken]] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -39,6 +49,7 @@ async def save_sentence(
     session: AsyncSession = Depends(get_db),
 ) -> SavedSentenceResponse:
     try:
+        tokens_json = [t.model_dump() for t in body.tokens] if body.tokens else None
         sentence = await _repo.create(
             session,
             user_id=current_user.id,
@@ -46,6 +57,7 @@ async def save_sentence(
             sentence_text=body.sentence_text,
             sentence_index=body.sentence_index,
             book_id=body.book_id,
+            tokens=tokens_json,
         )
         await session.commit()
         return SavedSentenceResponse.model_validate(sentence)

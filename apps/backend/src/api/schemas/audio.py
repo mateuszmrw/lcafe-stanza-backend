@@ -25,3 +25,14 @@ class TtsStatusResponse(BaseModel):
 
 class TtsGenerateRequest(BaseModel):
     pass  # no params for now — language inferred from book
+
+
+class TimeIndexEntry(BaseModel):
+    page_number: int
+    sentence_index: int
+    start_ms: int
+    end_ms: int
+
+
+class TimeIndexResponse(BaseModel):
+    index: list[TimeIndexEntry]

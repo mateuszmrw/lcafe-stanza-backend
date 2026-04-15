@@ -18,6 +18,34 @@ class WordFrequencyRepository:
             )
         )
 
+    async def batch_lookup(
+        self, session: AsyncSession, language_code: str, lemmas: list[str]
+    ) -> dict[str, str]:
+        """Return {lemma: tier_label} for all matching lemmas in one query."""
+        if not lemmas:
+            return {}
+        result = await session.execute(
+            sa.select(WordFrequency.lemma, WordFrequency.rank).where(
+                WordFrequency.language_code == language_code,
+                WordFrequency.lemma.in_(lemmas),
+            )
+        )
+        tiers: dict[str, str] = {}
+        for row in result:
+            rank = row.rank
+            if rank <= 1000:
+                tier = "Top 1k"
+            elif rank <= 3000:
+                tier = "Top 3k"
+            elif rank <= 5000:
+                tier = "Top 5k"
+            elif rank <= 10000:
+                tier = "Top 10k"
+            else:
+                tier = f"Rank {rank:,}"
+            tiers[row.lemma] = tier
+        return tiers
+
     async def bulk_upsert(self, session: AsyncSession, rows: list[dict]) -> int:
         if not rows:
             return 0

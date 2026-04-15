@@ -20,11 +20,13 @@ interface ReaderState {
   panelAnchor: PanelAnchor | null
   /** Full sentence text for the currently active token */
   sentenceContext: string | null
+  /** Full token array for the active sentence (for grammar annotation) */
+  sentenceTokens: TokenWithStatus[] | null
   setActiveToken: (token: (TokenWithStatus & { wordId?: string }) | null) => void
   // Does NOT clear activeToken — both coexist so word panel switches to selection mode
   setSelectedText: (text: string | null, tokens?: TokenWithStatus[]) => void
   setPanelAnchor: (anchor: PanelAnchor | null) => void
-  setSentenceContext: (context: string | null) => void
+  setSentenceContext: (context: string | null, tokens?: TokenWithStatus[]) => void
   clearActive: () => void
 }
 
@@ -34,9 +36,10 @@ export const useReaderStore = create<ReaderState>((set) => ({
   selectedTokens: null,
   panelAnchor: null,
   sentenceContext: null,
+  sentenceTokens: null,
   setActiveToken: (token) => set({ activeToken: token, selectedText: null, selectedTokens: null }),
   setSelectedText: (text, tokens) => set({ selectedText: text, selectedTokens: tokens ?? null }),
   setPanelAnchor: (anchor) => set({ panelAnchor: anchor }),
-  setSentenceContext: (context) => set({ sentenceContext: context }),
-  clearActive: () => set({ activeToken: null, selectedText: null, selectedTokens: null, panelAnchor: null, sentenceContext: null }),
+  setSentenceContext: (context, tokens) => set({ sentenceContext: context, sentenceTokens: tokens ?? null }),
+  clearActive: () => set({ activeToken: null, selectedText: null, selectedTokens: null, panelAnchor: null, sentenceContext: null, sentenceTokens: null }),
 }))

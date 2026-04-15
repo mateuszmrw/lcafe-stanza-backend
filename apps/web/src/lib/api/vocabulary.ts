@@ -12,6 +12,8 @@ export interface WordResponse {
   hint: string | null
   language_id: number
   lookup_count: number
+  exposure_count: number
+  difficulty_score: number | null
   created_at: string
 }
 
@@ -103,5 +105,16 @@ export async function batchUpsertWordStatus(
   return apiClient("/vocabulary/batch", {
     method: "POST",
     body: JSON.stringify(items),
+  })
+}
+
+export async function recordExposures(
+  lemmas: string[],
+  languageId: number
+): Promise<void> {
+  if (!lemmas.length) return
+  return apiClient("/vocabulary/record-exposures", {
+    method: "POST",
+    body: JSON.stringify({ lemmas, language_id: languageId }),
   })
 }

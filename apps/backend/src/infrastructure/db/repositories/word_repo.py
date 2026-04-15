@@ -49,7 +49,7 @@ class WordRepository:
         if not words:
             return {}
         result = await session.execute(
-            sa.select(Word.id, Word.word, Word.lemma, Word.pos, Word.reading, Word.gender, Word.feats, Word.dep_head, Word.dep_rel, Word.hint, Word.status).where(
+            sa.select(Word.id, Word.word, Word.lemma, Word.pos, Word.reading, Word.gender, Word.feats, Word.dep_head, Word.dep_rel, Word.hint, Word.status, Word.difficulty_score).where(
                 Word.user_id == user_id,
                 Word.language_id == language_id,
                 Word.word.in_(words),
@@ -67,6 +67,7 @@ class WordRepository:
                 "dep_rel": row.dep_rel,
                 "hint": row.hint,
                 "status": row.status,
+                "difficulty_score": row.difficulty_score,
             }
             for row in result
         }

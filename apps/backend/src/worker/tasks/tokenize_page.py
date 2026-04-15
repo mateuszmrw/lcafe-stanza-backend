@@ -51,7 +51,8 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
         }
 
         word_rows = _build_word_rows(
-            token_dicts, content_item.user_id, content_item.language_id, auto_ignore_propn
+            token_dicts, content_item.user_id, content_item.language_id, auto_ignore_propn,
+            source_page_id=page_uuid,
         )
         await _word_repo.bulk_upsert(
             session,
@@ -129,6 +130,7 @@ def _build_word_rows(
     user_id: uuid.UUID,
     language_id: int,
     auto_ignore_propn: bool,
+    source_page_id: uuid.UUID | None = None,
 ) -> list[dict]:
     """Deduplicate tokens and build word rows for bulk upsert."""
     seen: set[str] = set()
@@ -153,6 +155,8 @@ def _build_word_rows(
             "dep_head": t.get("dep_head", 0),
             "dep_rel": t.get("dep_rel", ""),
             "status": "ignored" if is_ignored else "new",
+            "source_page_id": source_page_id,
+            "source_sentence_index": t.get("si"),
         })
     return rows
 
