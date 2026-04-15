@@ -116,8 +116,10 @@ async def upload_dictionary(
                 else:
                     glosses.append(sense_gloss)
 
-        forms: list[str] = [
-            f.get("form", "") for f in obj.get("forms", []) if f.get("form")
+        forms: list[dict] = [
+            {"form": f.get("form", ""), "tags": f.get("tags", [])}
+            for f in obj.get("forms", [])
+            if f.get("form") and f.get("form") not in ("-", "—", "–")
         ]
         etymology = obj.get("etymology_text") or obj.get("etymology") or None
 

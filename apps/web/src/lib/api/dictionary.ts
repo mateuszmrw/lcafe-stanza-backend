@@ -5,11 +5,16 @@ export interface FrequencyInfo {
   tier: "very_common" | "common" | "uncommon" | "rare" | "very_rare"
 }
 
+export interface WordForm {
+  form: string
+  tags: string[]
+}
+
 export interface DictionaryEntry {
   lemma: string
   pos: string
   glosses: string[]
-  forms: string[]
+  forms: WordForm[]
   etymology: string | null
   labels: string[]
   frequency: FrequencyInfo | null

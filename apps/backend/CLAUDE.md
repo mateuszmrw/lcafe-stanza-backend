@@ -159,7 +159,7 @@ src/
 ## Stanza pipeline
 
 - `StanzaClient` is a global singleton initialized at startup via `get_stanza_client()`.
-- Current processors: `tokenize,pos,lemma`. Adding `depparse` costs ~300ms latency + ~15% memory per language.
+- Current processors: `tokenize,pos,lemma,depparse` — all four active. Models download automatically on first startup per language.
 - `tokenize_sync(lang, text)` → `list[dict]` with keys: `w, l, pos, r, g, feats, pi, si, dep_head, dep_rel`.
 - `feats` is Stanza's raw morphological string, e.g. `"Case=Nom|Gender=Masc|Number=Sing"`.
 - Workers call `stanza_client.tokenize_sync()` inside `asyncio.to_thread()` (CPU-bound, not async-friendly).

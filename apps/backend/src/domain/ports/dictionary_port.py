@@ -12,7 +12,7 @@ class DictionaryEntry(BaseModel):
     lemma: str
     pos: str
     glosses: list[str]
-    forms: list[str]
+    forms: list[dict]  # each dict: {"form": str, "tags": list[str]}
     etymology: str | None = None
     labels: list[str] = []
     frequency: FrequencyInfo | None = None
