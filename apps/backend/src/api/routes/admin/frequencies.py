@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_db, require_admin
+from src.core.config import get_settings
 from src.infrastructure.db.models.users import User
 from src.infrastructure.db.repositories.word_frequency_repo import WordFrequencyRepository
 
@@ -57,7 +58,13 @@ async def upload_frequencies(
 
     lang = language_code.lower()
 
-    content = await file.read()
+    max_bytes = get_settings().max_upload_bytes
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Frequency file too large. Max {max_bytes // (1024 * 1024)} MB.",
+        )
     lines = content.decode("utf-8", errors="replace").splitlines()
 
     # Parse the entire file before touching the DB. This way a malformed file

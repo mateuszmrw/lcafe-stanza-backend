@@ -35,6 +35,8 @@ interface AudioPlayerState {
   setTimeIndex: (index: TimeIndexEntry[]) => void
   setOnPageChange: (cb: ((page: number) => void) | null) => void
   clearTimeIndex: () => void
+  /** Wipe all audio state — used when switching books in the reader. */
+  reset: () => void
 }
 
 export const useAudioPlayerStore = create<AudioPlayerState>((set, get) => ({
@@ -159,5 +161,20 @@ export const useAudioPlayerStore = create<AudioPlayerState>((set, get) => ({
 
   clearTimeIndex: () => {
     set({ timeIndex: [], lastPageNumber: null, pendingPage: null, onPageChange: null })
+  },
+
+  reset: () => {
+    set({
+      isPlaying: false,
+      currentTimeMs: 0,
+      activeSentenceIndex: null,
+      alignments: [],
+      currentAudioFile: null,
+      seekTarget: null,
+      timeIndex: [],
+      lastPageNumber: null,
+      pendingPage: null,
+      onPageChange: null,
+    })
   },
 }))

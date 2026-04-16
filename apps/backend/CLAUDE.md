@@ -39,9 +39,9 @@ src/
         frequencies.py             # POST /admin/frequencies (CSV word frequency import)
         system_keys.py             # CRUD /admin/system-keys (encrypted API keys)
         deepl_instances.py         # CRUD /admin/deepl-instances
-        llm.py                     # GET/PUT /admin/llm (OpenAI / Claude config)
+        llm.py                     # GET/PUT /admin/llm (OpenAI config)
         anki.py                    # GET/PUT /admin/anki (AnkiConnect URL)
-        tts.py                     # POST /admin/tts/test (Qwen TTS test)
+        tts.py                     # GET /admin/tts, GET /admin/tts/models (OpenAI-compatible TTS)
         data.py                    # DELETE /admin/data/reset (requires "DELETE ALL DATA")
     schemas/
       auth.py, books.py, users.py, vocabulary.py, admin.py, grammar.py, audio.py
@@ -119,9 +119,9 @@ src/
     deepl/client.py                # DeepL HTTP client
     wiktionary/db_adapter.py       # Dictionary lookup from DictionaryEntry table
     llm/
-      client.py                    # Abstract LLM base + OpenAIClient + ClaudeClient
+      client.py                    # Abstract LLMClient base + OpenAIClient
       resolver.py                  # resolve_llm_client(session) — DB key → env var cascade
-    tts/providers/qwen.py          # Qwen TTS HTTP client
+    tts/providers/openai_tts.py    # OpenAI-compatible audio API client (generate + list_models)
   worker/
     settings.py                    # ARQ WorkerSettings — registers all tasks
     events.py                      # publish_import_event → Redis pub/sub
@@ -190,7 +190,7 @@ src/
 
 ### `generate_tts_audio(ctx, book_id)`
 - Triggered by `POST /books/{id}/audio/generate-tts`.
-- Calls Qwen TTS per sentence (with `TtsSentenceCache` deduplication by `text_hash`).
+- Calls the OpenAI-compatible TTS server (`settings.openai_tts_url`) per sentence, with `TtsSentenceCache` deduplication by `text_hash`.
 - Generates DASH manifest (.mpd + .m4s segments) per page → stores in `storage_root/books/{book_id}/tts/`.
 - Updates `content_page.tts_manifest_path`, sets `book.tts_status = "complete"`.
 
@@ -202,12 +202,10 @@ src/
 
 ## LLM provider cascade
 
-Used by grammar explanation and synonym nuance:
+Used by grammar explanation and synonym nuance. OpenAI-only:
 1. Query `system_api_keys` for OpenAI key → if found, use `OpenAIClient`.
 2. Fall back to `openai_api_key` env var.
-3. Query `system_api_keys` for Claude key → if found, use `ClaudeClient`.
-4. Fall back to `claude_api_key` env var.
-5. If nothing found, raise HTTP 503.
+3. If nothing found, raise HTTP 503.
 
 Shared via `resolve_llm_client(session)` in `infrastructure/llm/resolver.py`.
 

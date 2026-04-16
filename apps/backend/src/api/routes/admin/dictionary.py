@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_db, require_admin
+from src.core.config import get_settings
 from src.domain.dictionary.parser_factory import get_parser, supported_slugs
 from src.infrastructure.db.models.dictionary_entries import DictionaryEntry as DictionaryEntryModel
 from src.infrastructure.db.models.users import User
@@ -243,18 +244,19 @@ async def upload_dictionary(
     tgt = target_lang.lower()
     deleted = 0
 
-    # Read in chunks with a hard cap so a malicious or accidental 5GB upload
-    # can't OOM the server. Wiktionary dumps are typically 100-500MB.
-    _MAX_DICT_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB cap
+    # Read in chunks with a hard cap so a malicious or accidental oversized
+    # upload can't OOM the server. Wiktionary dumps are typically 100-500MB;
+    # the cap is overridable via MAX_DICTIONARY_UPLOAD_BYTES.
+    max_bytes = get_settings().max_dictionary_upload_bytes
     _CHUNK = 1024 * 1024  # 1 MB
     content_parts: list[bytes] = []
     total = 0
     while chunk := await file.read(_CHUNK):
         total += len(chunk)
-        if total > _MAX_DICT_UPLOAD_BYTES:
+        if total > max_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"Dictionary file too large. Max {_MAX_DICT_UPLOAD_BYTES // (1024 * 1024)} MB.",
+                detail=f"Dictionary file too large. Max {max_bytes // (1024 * 1024)} MB.",
             )
         content_parts.append(chunk)
     content = b"".join(content_parts)

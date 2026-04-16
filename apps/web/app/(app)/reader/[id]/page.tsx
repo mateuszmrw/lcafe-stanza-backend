@@ -42,8 +42,18 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const [viewMode, setViewMode] = useState<ViewMode>("page")
   const [sentenceIndex, setSentenceIndex] = useState(sentenceParam)
   const [showAudioPanel, setShowAudioPanel] = useState(false)
-  const { setAlignments, seekTo, setTimeIndex, setOnPageChange, clearTimeIndex } = useAudioPlayerStore()
+  const { setAlignments, seekTo, setTimeIndex, setOnPageChange, clearTimeIndex, reset: resetAudio } = useAudioPlayerStore()
   const { autoMarkRead } = useReaderSettings()
+
+  // Wipe audio-player state when switching books. Without this, alignments
+  // and activeSentenceIndex leak from the previous book — e.g. the amber
+  // sentence underline disappears or shows on the wrong sentence when you
+  // navigate from an audiobook to a website import (no audio) and back.
+  useEffect(() => {
+    resetAudio()
+    return resetAudio
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id])
 
   const { data: book, isLoading, isError } = useQuery({
     queryKey: ["book", id],
@@ -184,10 +194,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   }, [])
 
   // Keyboard navigation (page mode only — sentence and karaoke modes handle their own)
+  // Page nav: ArrowLeft/K = prev, ArrowRight/J = next. Escape closes panel.
+  // Status shortcuts 1–5 live in DefinitionPanel (only when a token is active).
   useEffect(() => {
     if (viewMode !== "page") return
     function handleKey(e: KeyboardEvent) {
-      // Don't hijack arrow keys when the user is in an input or selecting text.
+      // Don't hijack keys when the user is in an input or selecting text.
       // Shift/Ctrl/Alt+Arrow are browser text-selection shortcuts — let them through.
       const target = e.target as HTMLElement | null
       if (target && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable)) {
@@ -195,13 +207,20 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
       }
       if (e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return
 
-      if (e.key === "ArrowLeft" && page > 1) {
+      const pageCount = book?.page_count ?? 1
+      // Space is intentionally left to the browser for natural scroll within a page.
+      const isPrev = e.key === "ArrowLeft" || e.key === "k" || e.key === "K"
+      const isNext = e.key === "ArrowRight" || e.key === "j" || e.key === "J"
+
+      if (isPrev && page > 1) {
         e.preventDefault()
         setPage(page - 1)
+        return
       }
-      if (e.key === "ArrowRight" && book && page < (book.page_count ?? 1)) {
+      if (isNext && book && page < pageCount) {
         e.preventDefault()
         setPage(page + 1)
+        return
       }
       if (e.key === "Escape") clearActive()
     }

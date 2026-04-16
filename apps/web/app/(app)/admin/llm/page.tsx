@@ -18,11 +18,6 @@ const MODELS: Record<string, string[]> = {
     "gpt-4o",
     "gpt-4o-mini",
   ],
-  claude: [
-    "claude-opus-4-6",
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5-20251001",
-  ],
 }
 
 const KEY_SOURCE_LABELS: Record<string, { label: string; color: string }> = {

@@ -85,11 +85,11 @@ async def upload_book(
         )
 
     settings = get_settings()
-    content = await file.read(settings.max_upload_bytes + 1)
-    if len(content) > settings.max_upload_bytes:
+    content = await file.read(settings.max_book_upload_bytes + 1)
+    if len(content) > settings.max_book_upload_bytes:
         raise HTTPException(
             status_code=413,
-            detail=f"File too large. Maximum allowed size is {settings.max_upload_bytes // (1024 * 1024)} MB.",
+            detail=f"File too large. Maximum allowed size is {settings.max_book_upload_bytes // (1024 * 1024)} MB.",
         )
 
     # Detect format by magic bytes.

@@ -12,19 +12,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import get_settings
 from src.domain.tts.dash_segmenter import DashSegmenter
 from src.infrastructure.db.repositories.tts_cache_repo import TtsCacheRepository
-from src.infrastructure.tts.providers.qwen import QwenTtsProvider
+from src.infrastructure.tts.providers.openai_tts import OpenAITtsProvider
 
 logger = logging.getLogger(__name__)
 
 
 class TtsService:
     def __init__(self) -> None:
-        self._qwen = QwenTtsProvider()
+        self._provider = OpenAITtsProvider()
         self._cache_repo = TtsCacheRepository()
         self._segmenter = DashSegmenter()
 
     def supports_language(self, language_code: str) -> bool:
-        return self._qwen.supports(language_code)
+        return self._provider.supports(language_code)
 
     async def get_or_generate_sentence(
         self,
@@ -50,7 +50,7 @@ class TtsService:
 
         # Generate and persist
         settings = get_settings()
-        audio_bytes = await self._qwen.generate(text_normalized, language_code)
+        audio_bytes = await self._provider.generate(text_normalized, language_code)
 
         rel_path = os.path.join("tts", language_code, f"{text_hash}.mp3")
         abs_path = os.path.join(settings.storage_root, rel_path)

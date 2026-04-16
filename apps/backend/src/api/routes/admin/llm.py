@@ -15,11 +15,9 @@ _system_key_repo = SystemApiKeyRepository()
 
 _ENV_MODEL_FALLBACKS = {
     "openai": lambda: get_settings().openai_model,
-    "claude": lambda: get_settings().claude_model,
 }
 _ENV_KEY_FALLBACKS = {
     "openai": lambda: get_settings().openai_api_key,
-    "claude": lambda: get_settings().claude_api_key,
 }
 
 

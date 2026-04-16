@@ -33,7 +33,5 @@ apps/backend/.mypy_cache
 apps/backend/.ruff_cache
 
 # Docs / plans
-docs
 plans
 dev
-*.md

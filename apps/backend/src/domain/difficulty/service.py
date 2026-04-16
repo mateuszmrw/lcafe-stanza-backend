@@ -4,7 +4,6 @@ from __future__ import annotations
 import uuid
 
 import sqlalchemy as sa
-import sqlalchemy.dialects.postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.db.models.dictionary_entries import DictionaryEntry
@@ -78,13 +77,11 @@ class DifficultyService:
                 if row.cnt and row.cnt > 0:
                     counts[row.bare] = row.cnt
 
-        # Wiktionary (any language, forms is JSON not JSONB — cast required)
+        # Wiktionary (any language, forms is JSON — use json_array_length, not jsonb_array_length)
         result = await session.execute(
             sa.select(
                 DictionaryEntry.word,
-                sa.func.jsonb_array_length(
-                    sa.type_coerce(DictionaryEntry.forms, sa.dialects.postgresql.JSONB)
-                ).label("cnt"),
+                sa.func.json_array_length(DictionaryEntry.forms).label("cnt"),
             ).where(
                 DictionaryEntry.word.in_(lemmas),
                 DictionaryEntry.forms.isnot(None),

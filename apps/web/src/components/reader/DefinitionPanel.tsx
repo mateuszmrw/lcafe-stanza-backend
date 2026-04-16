@@ -878,6 +878,62 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
   // Hoisted so both the NLP card and the forms table can use it
   const caseAbbr = token ? extractFeat(token.f, "Case") : null
 
+  // Grammar rows — computed once so the tab bar can hide the Grammar tab when empty
+  type GrammarRow = { label: string; value: string; highlight?: string }
+  const grammarRows = useMemo<GrammarRow[]>(() => {
+    if (!token) return []
+    if (!(token.r || token.g || token.f || token.dep_rel)) return []
+    const langCode = languageCode.slice(0, 2)
+    const caseName = caseAbbr ? (FEAT_VALUE_LABELS[caseAbbr] ?? caseAbbr) : null
+    const caseDesc = caseAbbr ? CASE_DESCRIPTIONS[caseAbbr] : null
+    const caseQuestion = caseAbbr ? CASE_QUESTIONS[langCode]?.[caseAbbr] : null
+    const moodAbbr = extractFeat(token.f, "Mood")
+    const moodName = moodAbbr ? (FEAT_VALUE_LABELS[moodAbbr] ?? moodAbbr) : null
+    const moodDesc = moodAbbr ? MOOD_DESCRIPTIONS[moodAbbr] : null
+    const depLabel = token.dep_rel ? DEP_REL_LABELS[token.dep_rel] : null
+    const otherFeats = parseFeats(token.f)
+    const rows: GrammarRow[] = []
+    if (cfg.show_case && caseName) {
+      rows.push({
+        label: caseName,
+        value: caseDesc ?? "",
+        highlight: cfg.show_case_question ? (caseQuestion ?? undefined) : undefined,
+      })
+    }
+    if (cfg.show_mood && moodName) {
+      rows.push({ label: moodName, value: moodDesc ?? "" })
+    }
+    if (cfg.show_dep_rel && depLabel && token.dep_rel !== "punct") {
+      rows.push({ label: "Role in sentence", value: depLabel })
+    }
+    if (cfg.show_reading && token.r) {
+      rows.push({ label: "Reading", value: token.r })
+    }
+    if (cfg.show_gender && token.g) {
+      const gLabel =
+        FEAT_VALUE_LABELS[token.g.charAt(0).toUpperCase() + token.g.slice(1)] ?? token.g
+      rows.push({ label: "Gender", value: gLabel })
+    }
+    if (cfg.show_feats) {
+      for (const { key, value } of otherFeats) {
+        rows.push({ label: key, value })
+      }
+    }
+    return rows
+  }, [token, caseAbbr, cfg, languageCode])
+
+  // Tabs shown for word mode. Grammar is hidden when there's nothing to show.
+  const availableTabs = useMemo<WordTab[]>(() => {
+    const tabs: WordTab[] = ["info", "dictionary"]
+    if (grammarRows.length > 0) tabs.push("grammar")
+    return tabs
+  }, [grammarRows.length])
+
+  // If the active tab just became unavailable (e.g. switched to a particle), fall back to info.
+  useEffect(() => {
+    if (!availableTabs.includes(wordTab)) setWordTab("info")
+  }, [availableTabs, wordTab])
+
   return (
     <>
       {/* Backdrop — mobile/tablet only */}
@@ -1100,7 +1156,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
           <>
             {/* Tab bar */}
             <div className="flex rounded-lg bg-zinc-800/60 p-0.5 gap-0.5">
-              {(["info", "grammar", "dictionary"] as const).map((tab) => (
+              {availableTabs.map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setWordTab(tab)}
@@ -1265,65 +1321,23 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
               </>
             )}
 
-            {/* ── Tab: Grammar (NLP metadata) ── */}
-            {wordTab === "grammar" && (
-              <>
-                {(token.r || token.g || token.f || token.dep_rel) && (() => {
-              const langCode = languageCode.slice(0, 2)
-              const caseName = caseAbbr ? (FEAT_VALUE_LABELS[caseAbbr] ?? caseAbbr) : null
-              const caseDesc = caseAbbr ? CASE_DESCRIPTIONS[caseAbbr] : null
-              const caseQuestion = caseAbbr ? (CASE_QUESTIONS[langCode]?.[caseAbbr]) : null
-              const moodAbbr = extractFeat(token.f, "Mood")
-              const moodName = moodAbbr ? (FEAT_VALUE_LABELS[moodAbbr] ?? moodAbbr) : null
-              const moodDesc = moodAbbr ? MOOD_DESCRIPTIONS[moodAbbr] : null
-              const depLabel = token.dep_rel ? DEP_REL_LABELS[token.dep_rel] : null
-              const otherFeats = parseFeats(token.f)
-              const nlpRows: Array<{ label: string; value: string; highlight?: string }> = []
-              if (cfg.show_case && caseName) {
-                nlpRows.push({
-                  label: caseName,
-                  value: caseDesc ?? "",
-                  highlight: cfg.show_case_question ? (caseQuestion ?? undefined) : undefined,
-                })
-              }
-              if (cfg.show_mood && moodName) {
-                nlpRows.push({ label: moodName, value: moodDesc ?? "" })
-              }
-              if (cfg.show_dep_rel && depLabel && token.dep_rel !== "punct") {
-                nlpRows.push({ label: "Role in sentence", value: depLabel })
-              }
-              if (cfg.show_reading && token.r) {
-                nlpRows.push({ label: "Reading", value: token.r })
-              }
-              if (cfg.show_gender && token.g) {
-                const gLabel = FEAT_VALUE_LABELS[token.g.charAt(0).toUpperCase() + token.g.slice(1)] ?? token.g
-                nlpRows.push({ label: "Gender", value: gLabel })
-              }
-              if (cfg.show_feats) {
-                for (const { key, value } of otherFeats) {
-                  nlpRows.push({ label: key, value })
-                }
-              }
-              if (nlpRows.length === 0) return null
-              return (
-                <div className="rounded-lg bg-zinc-800/60 divide-y divide-zinc-700/50">
-                  {nlpRows.map(({ label, value, highlight }, i) => (
-                    <div key={i} className="flex items-start justify-between gap-3 px-3 py-2">
-                      <span className="text-xs text-zinc-500 shrink-0">{label}</span>
-                      <div className="text-right min-w-0">
-                        {highlight && (
-                          <span className="text-xs text-amber-400 font-medium">{highlight}</span>
-                        )}
-                        {value && (
-                          <p className={`text-xs ${highlight ? "text-zinc-500 mt-0.5" : "text-zinc-300"}`}>{value}</p>
-                        )}
-                      </div>
+            {/* ── Tab: Grammar (NLP metadata) — only rendered when grammarRows is non-empty ── */}
+            {wordTab === "grammar" && grammarRows.length > 0 && (
+              <div className="rounded-lg bg-zinc-800/60 divide-y divide-zinc-700/50">
+                {grammarRows.map(({ label, value, highlight }, i) => (
+                  <div key={i} className="flex items-start justify-between gap-3 px-3 py-2">
+                    <span className="text-xs text-zinc-500 shrink-0">{label}</span>
+                    <div className="text-right min-w-0">
+                      {highlight && (
+                        <span className="text-xs text-amber-400 font-medium">{highlight}</span>
+                      )}
+                      {value && (
+                        <p className={`text-xs ${highlight ? "text-zinc-500 mt-0.5" : "text-zinc-300"}`}>{value}</p>
+                      )}
                     </div>
-                  ))}
-                </div>
-              )
-            })()}
-              </>
+                  </div>
+                ))}
+              </div>
             )}
 
             {/* ── Tab: Dictionary ── */}

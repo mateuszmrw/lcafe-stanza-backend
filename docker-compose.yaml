@@ -45,7 +45,6 @@ services:
     container_name: slovo-backend
     restart: unless-stopped
     networks:
-      - traefik
       - slovo-local
     ports:
       - "8678:8678"
@@ -58,12 +57,10 @@ services:
       DB_USERNAME: ${DB_USERNAME:-user}
       DB_PASSWORD: ${DB_PASSWORD:-password}
       # JWT_SECRET and DB_ENCRYPTION_KEY must be 32+ chars — validated at startup.
-      # Generate with: python -c 'import secrets; print(secrets.token_urlsafe(32))'
+      # Generate with: openssl rand -base64 32
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required, must be 32+ chars}
       DB_ENCRYPTION_KEY: ${DB_ENCRYPTION_KEY:?DB_ENCRYPTION_KEY is required, must be 32+ chars}
       REDIS_URL: redis://redis:6379
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       DEEPL_API_KEY: ${DEEPL_API_KEY:-}
     volumes:
       - stanza_models:/app/stanza_resources
@@ -73,12 +70,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.slovo-backend.rule=Host(`sl-backend.mrw.ovh`)"
-      - "traefik.http.routers.slovo-backend.entrypoints=websecure"
-      - "traefik.http.routers.slovo-backend.tls.certresolver=ovh"
-      - "traefik.http.services.slovo-backend.loadbalancer.server.port=8678"
 
   arq-worker:
     build:
@@ -123,18 +114,12 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8678}
     container_name: slovo-web
     networks:
-      - traefik
       - slovo-local
     restart: unless-stopped
     ports:
       - "4412:3000"
     depends_on:
       - backend
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.slovo-web.rule=Host(`slovo.mrw.ovh`)"
-      - "traefik.http.routers.slovo-web.entrypoints=websecure"
-      - "traefik.http.routers.slovo-web.tls.certresolver=ovh"
 
 volumes:
   postgres_data:
@@ -147,7 +132,5 @@ volumes:
     driver: local
 
 networks:
-  traefik:
-    external: true
   slovo-local:
     internal: true

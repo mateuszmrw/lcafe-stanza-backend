@@ -28,7 +28,7 @@ app/
       frequencies/page.tsx         # Word frequency CSV import
       system-keys/page.tsx         # System-level API key management
       deepl-instances/page.tsx     # DeepL source→target pair management
-      llm/page.tsx                 # OpenAI / Claude model configuration
+      llm/page.tsx                 # OpenAI model configuration
       anki/page.tsx                # AnkiConnect URL configuration
       users/page.tsx               # User list — role/active management
       data/page.tsx                # All-data reset (requires "DELETE ALL DATA")

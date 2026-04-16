@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_arq_pool, get_current_user, get_db
+from src.core.config import get_settings
 from src.api.schemas.youtube import (
     YouTubeImportRequest,
     YouTubeImportResponse,
@@ -211,9 +212,16 @@ async def upload_youtube_subtitles(
     if not content_item or content_item.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to modify this video")
 
-    # Read .srt file
+    # Read .srt file with a size cap so a huge upload can't OOM the server.
+    max_bytes = get_settings().max_upload_bytes
+    raw = await file.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Subtitle file too large. Max {max_bytes // (1024 * 1024)} MB.",
+        )
     try:
-        srt_content = (await file.read()).decode("utf-8")
+        srt_content = raw.decode("utf-8")
     except UnicodeDecodeError:
         raise HTTPException(
             status_code=400,

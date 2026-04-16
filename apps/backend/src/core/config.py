@@ -21,8 +21,13 @@ class Settings(BaseSettings):
     storage_root: str = "/app/storage"
     redis_url: str = "redis://redis:6379"
 
-    # File upload limit — protects against OOM from large uploads
-    max_upload_bytes: int = 500 * 1024 * 1024  # 500 MB
+    # Per-feature upload size caps — protect against OOM from oversized uploads.
+    # Each is overridable via its own env var so operators can tune them per
+    # deployment without cross-feature trade-offs. Endpoints without a
+    # dedicated cap fall back to `max_upload_bytes`.
+    max_upload_bytes: int = 100 * 1024 * 1024              # 100 MB — generic fallback (SRT subtitles, frequency CSVs)
+    max_book_upload_bytes: int = 500 * 1024 * 1024         # 500 MB — EPUB/PDF uploads
+    max_dictionary_upload_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GB — Wiktionary / dictionary dumps
 
     # Database
     db_host: str = "localhost"
@@ -34,14 +39,11 @@ class Settings(BaseSettings):
     deepl_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-5.4-mini"
-    claude_api_key: Optional[str] = None
-    claude_model: str = "claude-sonnet-4-6"
-    admin_email: Optional[str] = None
-    admin_password: Optional[str] = None
 
-    # TTS
-    qwen_tts_url: Optional[str] = None
-    qwen_tts_api_key: Optional[str] = None
+    # TTS — any server that implements the OpenAI POST /v1/audio/speech API
+    openai_tts_url: Optional[str] = None
+    openai_tts_api_key: Optional[str] = None
+    openai_tts_model: str = "qwen3-tts"
 
     @property
     def database_url(self) -> str:
@@ -69,12 +71,12 @@ class Settings(BaseSettings):
         if len(self.jwt_secret) < _MIN_SECRET_LEN:
             raise ValueError(
                 f"jwt_secret must be at least {_MIN_SECRET_LEN} characters. "
-                f"Generate one with: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+                f"Generate one with: openssl rand -base64 32"
             )
         if len(self.db_encryption_key) < _MIN_SECRET_LEN:
             raise ValueError(
                 f"db_encryption_key must be at least {_MIN_SECRET_LEN} characters. "
-                f"Generate one with: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+                f"Generate one with: openssl rand -base64 32"
             )
         return self
 

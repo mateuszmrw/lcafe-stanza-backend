@@ -99,7 +99,7 @@ interface ReadingPaneProps {
 
 export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChange, onFinish }: ReadingPaneProps) {
   const noWordSpacing = isNoSpaceLanguage(languageCode)
-  const { activeToken, setActiveToken, setSelectedText, setPanelAnchor, setSentenceContext } = useReaderStore()
+  const { activeToken, selectedText, setActiveToken, setSelectedText, setPanelAnchor, setSentenceContext, clearActive } = useReaderStore()
   // Select individual slices so audioPlayer tick() (fires 5x/sec) doesn't
   // re-render the whole pane — only activeSentenceIndex updates matter here.
   const activeSentenceIndex = useAudioPlayerStore((s) => s.activeSentenceIndex)
@@ -112,9 +112,6 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
   // on the token under the pointer does not re-open word mode.
   const selectionJustCommittedRef = useRef(false)
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null)
-
-  // Swipe navigation
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null)
 
   // Scroll position restore
   const scrollRestoredRef = useRef(false)
@@ -206,24 +203,10 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
     sel.removeAllRanges()
   }
 
-  function handleTouchStart(e: React.TouchEvent) {
-    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-  }
-
-  function handleTouchEnd(e: React.TouchEvent) {
-    if (touchStartRef.current) {
-      const touch = e.changedTouches[0]
-      const dx = touch.clientX - touchStartRef.current.x
-      const dy = touch.clientY - touchStartRef.current.y
-      touchStartRef.current = null
-      // Horizontal swipe: more than 60px horizontal, dominantly horizontal
-      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
-        if (dx < 0 && page < totalPages) onPageChange(page + 1)
-        else if (dx > 0 && page > 1) onPageChange(page - 1)
-        return
-      }
-    }
-    // Small delay to let iOS finalise the selection object before we read it
+  function handleTouchEnd() {
+    // Small delay to let iOS finalise the selection object before we read it.
+    // Page navigation via swipe is intentionally disabled — it fought with
+    // phrase selection on iPad. Use the Previous/Next buttons or keyboard shortcuts.
     setTimeout(commitNativeSelection, 50)
   }
 
@@ -259,14 +242,43 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
     if (target) seekTo(target.ms, target.audioFile)
   }
 
+  /**
+   * Click landed on empty space in the reading pane (not on a token).
+   * Clears any active word or phrase selection. Must ignore clicks that are
+   * the tail end of a selection gesture (the mouseup that committed the
+   * selection fires just before this click).
+   */
+  function handleBackgroundClick(e: React.MouseEvent<HTMLDivElement>) {
+    // Token clicks are handled by WordToken's own onClick — bail out.
+    const target = e.target as HTMLElement | null
+    if (target?.closest("[data-token-index]")) return
+
+    // Desktop: commitNativeSelection ran on mouseup and set the flag. Consume
+    // it so this click isn't treated as a "dismiss" gesture.
+    if (selectionJustCommittedRef.current) {
+      selectionJustCommittedRef.current = false
+      return
+    }
+
+    // iPad: commitNativeSelection is queued on a setTimeout and hasn't run yet.
+    // If there's still a live browser selection spanning content, we're mid-gesture.
+    const sel = typeof window !== "undefined" ? window.getSelection() : null
+    if (sel && !sel.isCollapsed && sel.toString().trim().length > 1) return
+
+    if (activeToken || selectedText) {
+      clearActive()
+      setSelectionRange(null)
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div
         ref={containerRef}
         className="flex-1 overflow-y-auto px-12 py-8"
         onMouseUp={commitNativeSelection}
-        onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
+        onClick={handleBackgroundClick}
         onDragStart={(e) => e.preventDefault()}
       >
         {isLoading ? (
