@@ -2,13 +2,13 @@ import os
 from typing import AsyncGenerator
 
 # Set required env vars BEFORE importing any src modules (engine.py calls get_settings at import time)
-os.environ.setdefault("jwt_secret", "test-secret-key-for-testing-only-32ch")
-os.environ.setdefault("db_encryption_key", "test-encryption-key-32chars!!!!!!")
-os.environ.setdefault("db_database", "slovo_test")
-os.environ.setdefault("db_host", "localhost")
-os.environ.setdefault("db_port", "5432")
-os.environ.setdefault("db_username", "user")
-os.environ.setdefault("db_password", "password")
+os.environ.setdefault("JWT_SECRET", "test-secret-key-for-testing-only-32ch")
+os.environ.setdefault("DB_ENCRYPTION_KEY", "test-encryption-key-32chars!!!!!!")
+os.environ.setdefault("DB_DATABASE", "slovo_test")
+os.environ.setdefault("DB_HOST", "localhost")
+os.environ.setdefault("DB_PORT", "5432")
+os.environ.setdefault("DB_USERNAME", "user")
+os.environ.setdefault("DB_PASSWORD", "password")
 
 import pytest_asyncio
 from sqlalchemy import text

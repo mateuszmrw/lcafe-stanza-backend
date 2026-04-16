@@ -55,9 +55,12 @@ src/
       activity.ts                  # recordActivity, getStreak, getCalendar
       stats.ts                     # getStats(languageCode) → StatsResponse
       admin-*.ts                   # Admin API modules (languages, users, keys, etc.)
-    status-colors.ts               # STATUS_CLASSES (token styling) + STATUSES (button list)
+    status-colors.ts               # STATUS_CLASSES + STATUSES + getTokenClass(status, difficulty)
+    grammar.ts                     # dep_rel colors/labels (localized), feats parser, SentenceToken type
+    tokens.ts                      # getLemmaKey(token) — USE THIS instead of `t.l || t.w`
+    search.ts                      # upperBoundBy() — reusable binary search (used by audioPlayer)
     language-flags.ts              # LANGUAGE_FLAGS + getLanguageLabel()
-    reading-progress.ts            # getReadingProgress / saveReadingProgress (localStorage)
+    reading-progress.ts            # getReadingProgress / saveReadingProgress / saveAudioProgress (localStorage)
     cn.ts                          # clsx + tailwind-merge helper
   stores/
     auth.ts                        # Zustand: user, accessToken, login, logout, setActiveLanguage
@@ -101,16 +104,17 @@ interface TokenWithStatus {
   dep_rel: string  // Dependency relation label
   hint?: string    // User note
   status: "new" | "learning" | "known" | "ignored" | "well_known"
+  d?: number       // Difficulty score 0-100 (null if < 3 exposures)
 }
 ```
 
 ## Vocabulary keys
 
-Always use `token.l` (lemma) for vocabulary upserts — **not** `token.w` (surface form). Since migration 0042, the backend stores words by lemma. `DefinitionPanel` uses `lemmaKey = token.l || token.w`. Auto-advance in `reader/[id]/page.tsx` deduplicates and sends by `t.l || t.w`.
+Always use `token.l` (lemma) for vocabulary upserts — **not** `token.w` (surface form). Since migration 0042, the backend stores words by lemma. Use **`getLemmaKey(token)`** from `src/lib/tokens.ts` instead of writing `t.l || t.w` inline — single source of truth that also applies lowercasing consistently.
 
 ## Status colors
 
-`STATUS_CLASSES` and `STATUSES` live in `src/lib/status-colors.ts` — single source of truth. Both `WordToken` and `DefinitionPanel` import from there. Do not redefine these locally.
+`STATUS_CLASSES`, `STATUSES`, and `getTokenClass(status, difficulty)` live in `src/lib/status-colors.ts` — single source of truth. `WordToken` uses `getTokenClass` which scales opacity by difficulty score. Do not redefine these locally.
 
 ## TanStack Query conventions
 
@@ -136,10 +140,27 @@ Always use `token.l` (lemma) for vocabulary upserts — **not** `token.w` (surfa
 ## Reader store (Zustand)
 
 ```ts
-setActiveToken(token)   // sets activeToken, clears selectedText
-setSelectedText(text)   // sets selectedText; activeToken remains (both can coexist)
-clearActive()           // clears both
+setActiveToken(token)           // sets activeToken, clears selectedText
+setSelectedText(text, tokens?)  // sets selectedText + selectedTokens; activeToken remains
+setSentenceContext(text, tokens?) // sets sentenceContext + sentenceTokens (for grammar annotation)
+clearActive()                   // clears all
 ```
+
+### Zustand selector pattern (performance-critical)
+
+The `audioPlayer` store fires `tick(ms)` at ~5x/sec during playback. Components that
+consume it **must use per-field selectors** to avoid re-rendering on every tick:
+
+```ts
+// ❌ DON'T — re-renders on every currentTimeMs update
+const { activeSentenceIndex, seekToSentence } = useAudioPlayerStore()
+
+// ✅ DO — only re-renders when the specific slice changes
+const activeSentenceIndex = useAudioPlayerStore((s) => s.activeSentenceIndex)
+const seekToSentence = useAudioPlayerStore((s) => s.seekToSentence)
+```
+
+This applies to `ReadingPane`, `KaraokeView`, `SentenceView`, and any new reader component.
 
 ## Reading progress
 
@@ -169,7 +190,7 @@ On page turn:
 <!-- MEMORY:START -->
 # web
 
-_Last updated: 2026-04-15 | 0 active memories, 0 total_
+_Last updated: 2026-04-16 | 0 active memories, 0 total_
 
 _For deeper context, use memory_search, memory_related, or memory_ask tools._
 <!-- MEMORY:END -->

@@ -100,7 +100,11 @@ interface ReadingPaneProps {
 export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChange, onFinish }: ReadingPaneProps) {
   const noWordSpacing = isNoSpaceLanguage(languageCode)
   const { activeToken, setActiveToken, setSelectedText, setPanelAnchor, setSentenceContext } = useReaderStore()
-  const { activeSentenceIndex, seekToSentence, seekTo } = useAudioPlayerStore()
+  // Select individual slices so audioPlayer tick() (fires 5x/sec) doesn't
+  // re-render the whole pane — only activeSentenceIndex updates matter here.
+  const activeSentenceIndex = useAudioPlayerStore((s) => s.activeSentenceIndex)
+  const seekToSentence = useAudioPlayerStore((s) => s.seekToSentence)
+  const seekTo = useAudioPlayerStore((s) => s.seekTo)
   const { fontSize, lineSpacing, textWidth } = useReaderSettings()
 
   const containerRef = useRef<HTMLDivElement>(null)

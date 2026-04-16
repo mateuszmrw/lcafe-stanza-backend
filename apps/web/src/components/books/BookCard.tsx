@@ -61,17 +61,35 @@ export function BookCard({ book, onDelete }: BookCardProps) {
         {book.title}
       </h3>
 
-      {/* Coverage bar */}
+      {/* Coverage bar — two-tone: solid for mastered (well_known),
+          lighter for covered (adds learning + known to mastered). */}
       {book.status === "completed" && book.coverage_pct != null && (
         <div className="mb-2">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-zinc-400">You know {book.coverage_pct}%</span>
+            <span
+              className="text-xs text-zinc-400"
+              title={
+                book.mastered_pct != null
+                  ? `${book.mastered_pct}% mastered · ${book.coverage_pct - book.mastered_pct}% learning or known`
+                  : undefined
+              }
+            >
+              You know {book.coverage_pct}%
+            </span>
           </div>
-          <div className="h-1.5 w-full rounded-full bg-zinc-800">
+          <div className="relative h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+            {/* Outer: total coverage (faded) */}
             <div
-              className="h-full rounded-full bg-emerald-500/70 transition-all duration-500"
+              className="absolute inset-y-0 left-0 bg-emerald-500/30 transition-all duration-500"
               style={{ width: `${book.coverage_pct}%` }}
             />
+            {/* Inner: mastered (solid) */}
+            {book.mastered_pct != null && book.mastered_pct > 0 && (
+              <div
+                className="absolute inset-y-0 left-0 bg-emerald-500/80 transition-all duration-500"
+                style={{ width: `${book.mastered_pct}%` }}
+              />
+            )}
           </div>
         </div>
       )}

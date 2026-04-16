@@ -30,39 +30,66 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
     redis: Redis = ctx["redis"]
     stanza_client: StanzaClient = ctx["stanza_client"]
 
-    async with AsyncSessionFactory() as session:
-        page, content_item, stanza_lang = await _load_page_context(session, page_uuid)
-        if page is None or content_item is None:
-            return
+    try:
+        async with AsyncSessionFactory() as session:
+            page, content_item, stanza_lang = await _load_page_context(session, page_uuid)
+            if page is None or content_item is None:
+                # Page or content item was deleted between enqueue and execution.
+                # Log but don't propagate — the book (if any) is already orphaned.
+                logger.warning("Skipping tokenize_page — page or content item missing: %s", page_uuid)
+                return
 
-        auto_ignore_propn = await _resolve_auto_ignore(
-            session, content_item.user_id, content_item.language_id
-        )
+            auto_ignore_propn = await _resolve_auto_ignore(
+                session, content_item.user_id, content_item.language_id
+            )
 
-        token_dicts: list[dict] = await asyncio.to_thread(
-            stanza_client.tokenize_sync, stanza_lang, page.text
-        )
+            # Stanza can hang on pathological input (unusual UTF-8 sequences,
+            # extremely long paragraphs). A 60s timeout is well above the p99
+            # for normal pages (~3000 chars ≈ 1-2s) but unblocks the worker
+            # thread if a page is stuck.
+            token_dicts: list[dict] = await asyncio.wait_for(
+                asyncio.to_thread(stanza_client.tokenize_sync, stanza_lang, page.text),
+                timeout=60.0,
+            )
 
-        # Build surface → lemma map for read-time enrichment (migration 0042).
-        page.lemma_map = {
-            t["w"].lower().strip(): (t.get("l") or t["w"]).lower().strip()
-            for t in token_dicts
-            if t["w"].strip()
-        }
+            # Build surface → lemma map for read-time enrichment (migration 0042).
+            page.lemma_map = {
+                t["w"].lower().strip(): (t.get("l") or t["w"]).lower().strip()
+                for t in token_dicts
+                if t["w"].strip()
+            }
 
-        word_rows = _build_word_rows(
-            token_dicts, content_item.user_id, content_item.language_id, auto_ignore_propn,
-            source_page_id=page_uuid,
-        )
-        await _word_repo.bulk_upsert(
-            session,
-            user_id=content_item.user_id,
-            language_id=content_item.language_id,
-            rows=word_rows,
-        )
+            word_rows = _build_word_rows(
+                token_dicts, content_item.user_id, content_item.language_id, auto_ignore_propn,
+                source_page_id=page_uuid,
+            )
+            await _word_repo.bulk_upsert(
+                session,
+                user_id=content_item.user_id,
+                language_id=content_item.language_id,
+                rows=word_rows,
+            )
 
-        page.status = "ready"
-        await session.commit()
+            page.status = "ready"
+            await session.commit()
+    except Exception as exc:
+        logger.exception("tokenize_page failed for page %s: %s", page_uuid, exc)
+        # Mark the page as failed and publish a failure event so the frontend
+        # stops polling / shows an error instead of spinning forever.
+        try:
+            async with AsyncSessionFactory() as err_session:
+                err_page = await err_session.get(ContentPage, page_uuid)
+                if err_page:
+                    err_page.status = "failed"
+                    await err_session.commit()
+                    book_id = err_page.content_item_id
+                    await publish_import_event(
+                        redis, book_id, "failed",
+                        {"page_id": str(page_uuid), "error": str(exc)[:200]},
+                    )
+        except Exception:
+            logger.exception("Failed to mark page %s as failed", page_uuid)
+        return
 
     book_id = content_item.id
     completed, total = await _update_progress(redis, book_id, len(token_dicts))
@@ -177,13 +204,16 @@ async def _update_progress(redis: Redis, book_id: uuid.UUID, token_count: int) -
 
 
 async def _try_finalize(redis: Redis, book_id: uuid.UUID, completed: int) -> None:
-    """Claim finalization via SETNX and run _finalize exactly once per book."""
+    """Claim finalization via atomic SET NX + TTL and run _finalize exactly once.
+
+    We set NX and EX in a single SET command so that if the worker crashes
+    between acquiring the lock and setting the TTL, the key still expires.
+    """
     finalizing_key = _FINALIZING_KEY.format(book_id=book_id)
-    acquired = await redis.setnx(finalizing_key, "1")
+    acquired = await redis.set(finalizing_key, "1", nx=True, ex=_REDIS_TTL)
     if not acquired:
         return
 
-    await redis.expire(finalizing_key, _REDIS_TTL)
     try:
         await _finalize(redis, book_id, completed)
     finally:

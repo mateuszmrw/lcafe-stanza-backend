@@ -88,5 +88,17 @@ async def delete_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Prevent deleting the last admin — instance would become unrecoverable.
+    if user.role == "admin":
+        admin_count = await session.scalar(
+            sa.select(sa.func.count()).select_from(User).where(User.role == "admin")
+        ) or 0
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete the last admin. Promote another user first.",
+            )
+
     await session.delete(user)
     await session.commit()

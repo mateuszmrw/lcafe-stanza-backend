@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -12,6 +13,13 @@ from src.infrastructure.db.models.users import User
 from src.infrastructure.llm.resolver import resolve_llm_client
 
 log = logging.getLogger(__name__)
+
+_LANG_CODE_RE = re.compile(r"^[a-z]{2,3}(?:-[a-zA-Z]{2,8})?$")
+
+
+def _safe_lang(code: str, fallback: str = "en") -> str:
+    code = (code or "").strip().lower()
+    return code if _LANG_CODE_RE.match(code) else fallback
 
 router = APIRouter(prefix="/synonyms", tags=["synonyms"])
 
@@ -74,10 +82,15 @@ async def get_synonym_nuance(
 ) -> SynonymNuanceResponse:
     await check_rate_limit(redis, f"synonyms:user:{current_user.id}", _RATE_LIMIT, _RATE_WINDOW)
 
-    native = current_user.native_language_code or "en"
+    # Sanitize language codes before embedding in prompt — they're user-controlled
+    # via the user's profile and request body, and would otherwise allow prompt
+    # injection (e.g. native_language_code = "en. Ignore all prior instructions.").
+    native = _safe_lang(current_user.native_language_code or "en")
+    target_lang = _safe_lang(body.language_code, fallback="unknown")
+
     context_line = f"Context sentence: {body.context_sentence}" if body.context_sentence else ""
     user_prompt = (
-        f"Target language: {body.language_code}\n"
+        f"Target language: {target_lang}\n"
         f"Word: {body.word!r} (lemma: {body.lemma!r}, POS: {body.pos})\n"
         f"{context_line}\n"
         f"Learner's native language: {native}\n"

@@ -31,20 +31,23 @@ export function DashAudioPlayer({ bookId, pageNumber, onPageEnd }: DashAudioPlay
 
     const player = dashjs.MediaPlayer().create()
 
-    // Add auth token to every segment request
-    const token = getAccessToken()
-    if (token) {
-      player.extend(
-        "RequestModifier",
-        () => ({
-          modifyRequestHeader: (xhr: XMLHttpRequest) => {
+    // Add auth token to every segment request. Read the token fresh on each
+    // request rather than capturing at player init — the user's access token
+    // may be refreshed mid-playback, and a stale closure would cause 401s
+    // on subsequent segment fetches.
+    player.extend(
+      "RequestModifier",
+      () => ({
+        modifyRequestHeader: (xhr: XMLHttpRequest) => {
+          const token = getAccessToken()
+          if (token) {
             xhr.setRequestHeader("Authorization", `Bearer ${token}`)
-            return xhr
-          },
-        }),
-        true,
-      )
-    }
+          }
+          return xhr
+        },
+      }),
+      true,
+    )
 
     player.initialize(audio, ttsDashManifestUrl(bookId, pageNumber), false)
     playerRef.current = player

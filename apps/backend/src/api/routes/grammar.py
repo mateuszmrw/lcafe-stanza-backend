@@ -60,7 +60,9 @@ async def explain_grammar(
             native_language_code=current_user.native_language_code or "en",
             register=body.register,
         )
-    except ValueError:
-        # Don't log the raw exception — it may contain API key material from SDK internals
-        log.error("Grammar explanation failed (exception details suppressed)")
+    except ValueError as exc:
+        # ValueError is raised by the service when the LLM returns unparseable JSON
+        # (it already logged the raw response). Exception type only — no exc details
+        # in case the message ever contains SDK internals.
+        log.warning("Grammar explanation returned unparseable LLM response: %s", exc)
         raise HTTPException(status_code=502, detail="LLM returned an invalid response. Try again.")

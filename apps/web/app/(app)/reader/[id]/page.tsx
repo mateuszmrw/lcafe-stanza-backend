@@ -9,6 +9,7 @@ import { getBook, getBookPages, type PageListResponse } from "@/src/lib/api/book
 import { getAlignmentsForPage, getTimeIndex } from "@/src/lib/api/audio"
 import { getReadingProgress, saveReadingProgress, getAudioProgress, saveAudioProgress } from "@/src/lib/reading-progress"
 import { batchUpsertWordStatus, recordExposures } from "@/src/lib/api/vocabulary"
+import { getLemmaKey } from "@/src/lib/tokens"
 import { useReaderStore } from "@/src/stores/reader"
 import { useAudioPlayerStore } from "@/src/stores/audioPlayer"
 import { useReaderSettings } from "@/src/stores/readerSettings"
@@ -186,8 +187,22 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   useEffect(() => {
     if (viewMode !== "page") return
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "ArrowLeft" && page > 1) setPage(page - 1)
-      if (e.key === "ArrowRight" && book && page < (book.page_count ?? 1)) setPage(page + 1)
+      // Don't hijack arrow keys when the user is in an input or selecting text.
+      // Shift/Ctrl/Alt+Arrow are browser text-selection shortcuts — let them through.
+      const target = e.target as HTMLElement | null
+      if (target && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable)) {
+        return
+      }
+      if (e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return
+
+      if (e.key === "ArrowLeft" && page > 1) {
+        e.preventDefault()
+        setPage(page - 1)
+      }
+      if (e.key === "ArrowRight" && book && page < (book.page_count ?? 1)) {
+        e.preventDefault()
+        setPage(page + 1)
+      }
       if (e.key === "Escape") clearActive()
     }
     document.addEventListener("keydown", handleKey)
@@ -202,13 +217,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
       p.tokens
         .filter((t) => t.status === "new")
         .filter((t) => {
-          const key = (t.l || t.w).toLowerCase()
+          const key = getLemmaKey(t)
           if (seen.has(key)) return false
           seen.add(key)
           return true
         })
         .map((t) => ({
-          word: t.l || t.w,
+          word: getLemmaKey(t),
           status: "well_known" as const,
           language_id: languageId,
           lemma: t.l,

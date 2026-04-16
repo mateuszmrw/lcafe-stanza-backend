@@ -47,7 +47,9 @@ export function SentenceView({
 }: SentenceViewProps) {
   const noWordSpacing = isNoSpaceLanguage(languageCode)
   const [showTranslation, setShowTranslation] = useState(false)
-  const { isPlaying, activeSentenceIndex } = useAudioPlayerStore()
+  // Per-field selectors — audio player ticks 5x/sec, don't re-render on currentTimeMs.
+  const isPlaying = useAudioPlayerStore((s) => s.isPlaying)
+  const activeSentenceIndex = useAudioPlayerStore((s) => s.activeSentenceIndex)
   const prevAudioSiRef = useRef<number | null>(null)
   const queryClient = useQueryClient()
 

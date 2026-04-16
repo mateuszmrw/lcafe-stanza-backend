@@ -98,8 +98,26 @@ async def get_stats(
     )
 
     if freq_exists:
-        def _coverage_query(tier: int) -> sa.Select:
-            return (
+        async def _tier_coverage(tier_size: int) -> float | None:
+            """Return fraction of the top-N most frequent words the user knows,
+            where N is the actual number of entries in the frequency table for
+            this language capped at tier_size. Returns None if the table has
+            no entries in that tier.
+            """
+            # Actual number of distinct lemmas in this tier (may be < tier_size
+            # if the imported frequency list is short).
+            total = await session.scalar(
+                sa.select(sa.func.count())
+                .select_from(WordFrequency)
+                .where(
+                    WordFrequency.language_code == language_code,
+                    WordFrequency.rank <= tier_size,
+                )
+            ) or 0
+            if total == 0:
+                return None
+
+            known = await session.scalar(
                 sa.select(sa.func.count())
                 .select_from(Word)
                 .join(
@@ -107,7 +125,7 @@ async def get_stats(
                     sa.and_(
                         WordFrequency.lemma == Word.lemma,
                         WordFrequency.language_code == language_code,
-                        WordFrequency.rank <= tier,
+                        WordFrequency.rank <= tier_size,
                     ),
                 )
                 .where(
@@ -115,15 +133,14 @@ async def get_stats(
                     Word.language_id == language_id,
                     Word.status.in_(["known", "well_known"]),
                 )
-            )
+            ) or 0
 
-        c1k = await session.scalar(_coverage_query(1000)) or 0
-        c5k = await session.scalar(_coverage_query(5000)) or 0
-        c10k = await session.scalar(_coverage_query(10000)) or 0
+            return round(min(known / total, 1.0), 4)
+
         frequency_coverage = FrequencyCoverage(
-            top_1k=round(c1k / 1000, 4),
-            top_5k=round(c5k / 5000, 4),
-            top_10k=round(c10k / 10000, 4),
+            top_1k=await _tier_coverage(1000),
+            top_5k=await _tier_coverage(5000),
+            top_10k=await _tier_coverage(10000),
         )
     else:
         frequency_coverage = FrequencyCoverage(top_1k=None, top_5k=None, top_10k=None)

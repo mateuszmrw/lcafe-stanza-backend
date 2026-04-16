@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_current_user, get_db
@@ -48,8 +49,8 @@ async def save_sentence(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> SavedSentenceResponse:
+    tokens_json = [t.model_dump() for t in body.tokens] if body.tokens else None
     try:
-        tokens_json = [t.model_dump() for t in body.tokens] if body.tokens else None
         sentence = await _repo.create(
             session,
             user_id=current_user.id,
@@ -61,8 +62,10 @@ async def save_sentence(
         )
         await session.commit()
         return SavedSentenceResponse.model_validate(sentence)
-    except Exception:
-        # Duplicate — sentence already saved
+    except IntegrityError:
+        # The unique constraint on (user_id, book_id, sentence_index) fired —
+        # user has already saved this sentence.
+        await session.rollback()
         raise HTTPException(status_code=409, detail="Sentence already saved")
 
 

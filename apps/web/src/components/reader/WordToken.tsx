@@ -38,11 +38,16 @@ export function WordToken({
     )
   }
 
+  // Show the lemma on hover when it differs from the surface form — useful
+  // for inflected languages where the dictionary form isn't obvious.
+  const hoverTitle = token.l && token.l !== token.w ? token.l : undefined
+
   return (
     <span
       role="button"
       tabIndex={0}
       data-token-index={tokenIndex}
+      title={hoverTitle}
       onClick={(e) => onClick(token, e)}
       onKeyDown={(e) => e.key === "Enter" && onClick(token, e as unknown as React.MouseEvent<HTMLSpanElement>)}
       className={cn(

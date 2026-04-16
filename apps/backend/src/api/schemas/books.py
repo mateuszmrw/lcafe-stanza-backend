@@ -38,6 +38,7 @@ class BookListItem(BaseModel):
     language_id: int
     created_at: datetime
     coverage_pct: Optional[int] = None
+    mastered_pct: Optional[int] = None
 
     model_config = {"from_attributes": True}
 

@@ -65,17 +65,21 @@ export function AudioPlayer({ bookId, totalDurationMs, onPageEnd }: AudioPlayerP
     const newSrc = buildSrc(currentAudioFile)
     audio.src = newSrc
 
-    if (isPlaying && alignments.length > 0) {
-      const startMs = alignments[0].audio_start_ms
-      audio.addEventListener(
-        "loadedmetadata",
-        () => {
-          audio.currentTime = startMs / 1000
-          tick(startMs)
-          audio.play().catch(() => {})
-        },
-        { once: true }
-      )
+    if (!isPlaying || alignments.length === 0) return
+
+    const startMs = alignments[0].audio_start_ms
+    const onLoaded = () => {
+      audio.currentTime = startMs / 1000
+      tick(startMs)
+      audio.play().catch(() => {})
+    }
+    audio.addEventListener("loadedmetadata", onLoaded, { once: true })
+
+    // If this effect re-runs (new currentAudioFile) before loadedmetadata fires
+    // for the previous source, remove the pending listener to avoid it running
+    // against the NEW audio element state and causing a wrong seek.
+    return () => {
+      audio.removeEventListener("loadedmetadata", onLoaded)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAudioFile])

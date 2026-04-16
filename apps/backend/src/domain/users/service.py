@@ -10,14 +10,19 @@ from src.domain.users.models import UserCreate, UserUpdate
 from src.infrastructure.db.models.users import User
 
 
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
 class UserService:
     async def register(self, session: AsyncSession, user_create: UserCreate) -> User:
-        existing = await self.get_by_email(session, user_create.email)
+        email = _normalize_email(user_create.email)
+        existing = await self.get_by_email(session, email)
         if existing:
-            raise ValueError(f"Email already registered: {user_create.email}")
+            raise ValueError(f"Email already registered: {email}")
 
         user = User(
-            email=user_create.email,
+            email=email,
             username=user_create.username,
             password_hash=hash_password(user_create.password),
         )
@@ -27,7 +32,7 @@ class UserService:
 
     async def get_by_email(self, session: AsyncSession, email: str) -> User | None:
         result = await session.execute(
-            sa.select(User).where(User.email == email)
+            sa.select(User).where(User.email == _normalize_email(email))
         )
         return result.scalar_one_or_none()
 

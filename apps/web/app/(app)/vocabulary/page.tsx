@@ -50,13 +50,29 @@ const POS_OPTIONS = [
 ]
 
 function DifficultyBadge({ score }: { score: number | null | undefined }) {
-  if (score == null) return <span className="text-xs text-zinc-600">—</span>
+  if (score == null) {
+    return (
+      <span
+        className="text-xs text-zinc-600"
+        title="Not enough data yet — score appears after you've seen the word 3 times"
+      >
+        —
+      </span>
+    )
+  }
   const color =
     score >= 70 ? "bg-red-500/20 text-red-400" :
     score >= 30 ? "bg-amber-500/20 text-amber-400" :
     "bg-emerald-500/20 text-emerald-400"
+  const tier =
+    score >= 70 ? "Hard" :
+    score >= 30 ? "Medium" :
+    "Easy"
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${color}`}
+      title={`${tier} — combines frequency rank (30%), inflection complexity (30%) and your personal lookup ratio (40%)`}
+    >
       {score}
     </span>
   )

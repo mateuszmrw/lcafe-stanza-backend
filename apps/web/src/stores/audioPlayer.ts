@@ -3,28 +3,11 @@
 import { create } from "zustand"
 import type { SentenceAlignment } from "@/src/lib/api/audio"
 import type { TimeIndexEntry } from "@/src/lib/api/audio"
+import { upperBoundBy } from "@/src/lib/search"
 
 interface SeekTarget {
   ms: number
   audioFile: string | null
-}
-
-/**
- * Binary search: find first index where entry.start_ms > ms.
- * Returns arr.length if all entries have start_ms <= ms.
- */
-function binarySearchGE(arr: TimeIndexEntry[], ms: number): number {
-  let left = 0
-  let right = arr.length
-  while (left < right) {
-    const mid = (left + right) >>> 1
-    if (arr[mid].start_ms <= ms) {
-      left = mid + 1
-    } else {
-      right = mid
-    }
-  }
-  return left
 }
 
 interface AudioPlayerState {
@@ -77,7 +60,7 @@ export const useAudioPlayerStore = create<AudioPlayerState>((set, get) => ({
 
     // Time-index mode (YouTube): binary search across all pages
     if (timeIndex.length > 0) {
-      const idx = binarySearchGE(timeIndex, currentTimeMs)
+      const idx = upperBoundBy(timeIndex, currentTimeMs, (e) => e.start_ms)
 
       if (idx === 0) {
         set({ currentTimeMs, activeSentenceIndex: null, pendingPage: null })

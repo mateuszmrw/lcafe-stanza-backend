@@ -50,19 +50,21 @@ services:
     ports:
       - "8678:8678"
     environment:
-      debug: "true"
-      use_gpu: "false"
-      db_host: postgresql
-      db_port: "5432"
-      db_database: ${DB_DATABASE:-db}
-      db_username: ${DB_USERNAME:-user}
-      db_password: ${DB_PASSWORD:-password}
-      jwt_secret: ${jwt_secret:-change-me-in-production}
-      db_encryption_key: ${db_encryption_key:-change-me-in-production}
-      redis_url: redis://redis:6379
-      admin_email: ${ADMIN_EMAIL:-}
-      admin_password: ${ADMIN_PASSWORD:-}
-      deepl_api_key: ${DEEPL_API_KEY:-}
+      DEBUG: "true"
+      USE_GPU: "false"
+      DB_HOST: postgresql
+      DB_PORT: "5432"
+      DB_DATABASE: ${DB_DATABASE:-db}
+      DB_USERNAME: ${DB_USERNAME:-user}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+      # JWT_SECRET and DB_ENCRYPTION_KEY must be 32+ chars — validated at startup.
+      # Generate with: python -c 'import secrets; print(secrets.token_urlsafe(32))'
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required, must be 32+ chars}
+      DB_ENCRYPTION_KEY: ${DB_ENCRYPTION_KEY:?DB_ENCRYPTION_KEY is required, must be 32+ chars}
+      REDIS_URL: redis://redis:6379
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      DEEPL_API_KEY: ${DEEPL_API_KEY:-}
     volumes:
       - stanza_models:/app/stanza_resources
       - storage:/app/storage
@@ -86,18 +88,18 @@ services:
     restart: unless-stopped
     command: ["/app/.venv/bin/arq", "src.worker.settings.WorkerSettings"]
     environment:
-      debug: "false"
-      languages: '["english", "russian", "polish"]'
-      use_gpu: "false"
-      db_host: postgresql
-      db_port: "5432"
-      db_database: ${DB_DATABASE:-db}
-      db_username: ${DB_USERNAME:-user}
-      db_password: ${DB_PASSWORD:-password}
-      jwt_secret: ${jwt_secret:-change-me-in-production}
-      db_encryption_key: ${db_encryption_key:-change-me-in-production}
-      redis_url: redis://redis:6379
-      deepl_api_key: ${DEEPL_API_KEY:-}
+      DEBUG: "false"
+      LANGUAGES: '["english", "russian", "polish"]'
+      USE_GPU: "false"
+      DB_HOST: postgresql
+      DB_PORT: "5432"
+      DB_DATABASE: ${DB_DATABASE:-db}
+      DB_USERNAME: ${DB_USERNAME:-user}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required, must be 32+ chars}
+      DB_ENCRYPTION_KEY: ${DB_ENCRYPTION_KEY:?DB_ENCRYPTION_KEY is required, must be 32+ chars}
+      REDIS_URL: redis://redis:6379
+      DEEPL_API_KEY: ${DEEPL_API_KEY:-}
     volumes:
       - stanza_models:/app/stanza_resources
       - storage:/app/storage

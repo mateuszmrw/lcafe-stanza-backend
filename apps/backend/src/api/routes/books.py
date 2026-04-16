@@ -194,9 +194,17 @@ async def upload_book(
     total_key = f"book:{content_item.id}:total_pages"
     await redis.setex(total_key, 86400, len(pages))
 
-    # Enqueue one tokenize_page job per page (pages are now committed)
-    for page in pages:
-        await arq_pool.enqueue_job("tokenize_page", str(page.id))
+    # Enqueue one tokenize_page job per page (pages are now committed).
+    # If enqueue fails partway through, mark the book failed so the user sees
+    # an error rather than a book stuck in "processing" forever.
+    try:
+        for page in pages:
+            await arq_pool.enqueue_job("tokenize_page", str(page.id))
+    except Exception:
+        content_item.status = "failed"
+        content_item.error_message = "Failed to enqueue tokenization jobs"
+        await session.commit()
+        raise
 
     return BookUploadResponse(
         id=content_item.id,
@@ -216,18 +224,24 @@ async def list_books(
         session, current_user.id, language_id=current_user.active_language_id
     )
 
-    # Compute vocabulary coverage for completed books
-    completed_ids = [item.id for item in items if item.status == "completed"]
-    coverage_map = await _coverage_service.compute_book_coverages(
-        session, redis, current_user.id,
-        current_user.active_language_id or 0,
-        completed_ids,
-    )
+    # Compute vocabulary coverage for completed books.
+    # Skip if the user has no active language — language_id=0 would query
+    # against a non-existent language and silently return null for every book.
+    coverage_map: dict = {}
+    if current_user.active_language_id is not None:
+        completed_ids = [item.id for item in items if item.status == "completed"]
+        coverage_map = await _coverage_service.compute_book_coverages(
+            session, redis, current_user.id,
+            current_user.active_language_id,
+            completed_ids,
+        )
 
     book_items = []
     for item in items:
         bi = BookListItem.model_validate(item)
-        bi.coverage_pct = coverage_map.get(item.id)
+        pair = coverage_map.get(item.id)
+        if pair is not None:
+            bi.coverage_pct, bi.mastered_pct = pair
         book_items.append(bi)
 
     return BookListResponse(items=book_items, total=len(items))
@@ -829,6 +843,12 @@ async def serve_tts_file(
         raise HTTPException(status_code=404, detail="Book not found")
 
     settings = get_settings()
+
+    # Defense in depth: reject filenames with path separators or parent refs
+    # before building the path. The realpath check below would also catch it,
+    # but rejecting early produces a clearer error and avoids disk access.
+    if "/" in filename or "\\" in filename or filename in ("", ".", "..") or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="Invalid filename")
 
     # Validate path is within this book's TTS directory
     rel_path = os.path.join("books", str(book_id), "tts", str(page_number), filename)

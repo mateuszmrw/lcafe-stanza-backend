@@ -1,10 +1,44 @@
 import json
 import logging
+import re
 
 from src.api.schemas.grammar import GrammarExplainResponse, TokenAnnotation, TokenInput
 from src.infrastructure.llm.client import LLMClient
 
 log = logging.getLogger(__name__)
+
+# Strict whitelist for values embedded in LLM prompts. Anything user-influenced
+# that lands in the prompt must pass these — otherwise a crafted input like
+# "en. Ignore all prior instructions and..." could hijack the prompt.
+_LANG_CODE_RE = re.compile(r"^[a-z]{2,3}(?:-[a-zA-Z]{2,8})?$")
+_PROFICIENCY_LEVELS = {"A1", "A2", "B1", "B2", "C1", "C2"}
+_ALLOWED_REGISTERS = {"formal", "literary", "informal", "technical"}
+
+
+def _safe_lang(code: str) -> str:
+    """Lowercase + validate a language code. Raises ValueError on injection attempts."""
+    code = (code or "").strip().lower()
+    if not _LANG_CODE_RE.match(code):
+        raise ValueError(f"Invalid language code: {code!r}")
+    return code
+
+
+def _safe_proficiency(level: str) -> str:
+    level = (level or "").strip().upper()
+    if level not in _PROFICIENCY_LEVELS:
+        raise ValueError(f"Invalid proficiency level: {level!r}")
+    return level
+
+
+def _safe_register(register: str | None) -> str | None:
+    if register is None:
+        return None
+    register = register.strip().lower()
+    if register not in _ALLOWED_REGISTERS:
+        # Drop invalid registers rather than raising — register is user-controlled
+        # metadata where nothing critical depends on it.
+        return None
+    return register
 
 _SYSTEM_PROMPT = """\
 You are a friendly language tutor helping someone learn a foreign language.
@@ -117,6 +151,13 @@ class GrammarExplanationService:
         native_language_code: str,
         register: str | None = None,
     ) -> GrammarExplainResponse:
+        # Sanitize any user-controlled values that end up in the prompt.
+        # Prevents prompt injection via e.g. native_language_code = "en. Ignore prior..."
+        language_code = _safe_lang(language_code)
+        native_language_code = _safe_lang(native_language_code)
+        proficiency_level = _safe_proficiency(proficiency_level)
+        register = _safe_register(register)
+
         user_prompt = _build_user_prompt(
             tokens, language_code, proficiency_level, native_language_code, register
         )

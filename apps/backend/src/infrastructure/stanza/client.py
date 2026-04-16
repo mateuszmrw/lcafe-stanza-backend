@@ -123,10 +123,17 @@ class StanzaClient:
         Multiple languages can tokenize concurrently.
         """
         pipeline = self.get_pipeline(lang)
+        # Double-checked locking: the fast path is dict.get without any lock.
+        # If missing, we acquire the global lock and check again before creating
+        # the per-language lock — prevents two threads creating separate locks
+        # for the same language, which would allow concurrent pipeline calls.
         lock = self._pipeline_locks.get(lang)
         if lock is None:
-            lock = threading.Lock()
-            self._pipeline_locks[lang] = lock
+            with _lock:
+                lock = self._pipeline_locks.get(lang)
+                if lock is None:
+                    lock = threading.Lock()
+                    self._pipeline_locks[lang] = lock
 
         with lock:
             doc = pipeline(text)
@@ -159,9 +166,7 @@ class StanzaClient:
         return tokens
 
     def list_installed_models(self) -> list[str]:
-        models = [lang for lang in self.loaded_languages]
-        print(models)
-        return models
+        return list(self.loaded_languages)
 
     def remove_languages(self) -> None:
         self.installed_languages = []

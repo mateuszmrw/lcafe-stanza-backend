@@ -29,7 +29,10 @@ interface KaraokeViewProps {
 export function KaraokeView({ bookId, page, languageCode, languageId }: KaraokeViewProps) {
   const noSpace = isNoSpaceLanguage(languageCode)
   const { activeToken, setActiveToken, setPanelAnchor } = useReaderStore()
-  const { activeSentenceIndex, seekToSentence, seekTo } = useAudioPlayerStore()
+  // Per-field selectors — audio player ticks 5x/sec, don't re-render on currentTimeMs.
+  const activeSentenceIndex = useAudioPlayerStore((s) => s.activeSentenceIndex)
+  const seekToSentence = useAudioPlayerStore((s) => s.seekToSentence)
+  const seekTo = useAudioPlayerStore((s) => s.seekTo)
   const queryClient = useQueryClient()
 
   const sentenceRefs = useRef<Map<number, HTMLDivElement>>(new Map())

@@ -66,7 +66,16 @@ async def set_system_key(
     if not provider:
         raise HTTPException(status_code=404, detail="Translation provider not found")
 
-    await _system_key_repo.upsert(session, provider.id, body.api_key.strip())
+    api_key = body.api_key.strip()
+    # Reject empty or obviously-invalid keys so we fail loudly at save time
+    # instead of silently breaking translation/LLM lookups later.
+    if len(api_key) < 10:
+        raise HTTPException(
+            status_code=400,
+            detail="API key is too short. Expected at least 10 characters.",
+        )
+
+    await _system_key_repo.upsert(session, provider.id, api_key)
     await session.commit()
 
 

@@ -6,6 +6,7 @@ them in the sentence_alignments table.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import uuid
@@ -148,7 +149,7 @@ async def align_smil_audio(ctx: dict, book_id: str) -> None:
 
         await redis.publish(
             f"audio-align:{book_uuid}",
-            f'{{"event":"complete","data":{{"sentences":{total}}}}}',
+            json.dumps({"event": "complete", "data": {"sentences": total}}),
         )
 
     except Exception as exc:

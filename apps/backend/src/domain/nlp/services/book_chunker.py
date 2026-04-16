@@ -15,23 +15,24 @@ class BookChunker:
         self.chunk_size = chunk_size
 
     def chunk(self) -> List[ChunkedText]:
+        """Flatten chapters into pages. Each parsed document item is its own
+        chapter — we do NOT merge consecutive items sharing the same name,
+        because books often have repeated "Untitled Chapter" labels for
+        structurally distinct chapters.
+        """
         result: List[ChunkedText] = []
         total_page = 1
         chapter_number = 0
-        prev_chapter_name = ""
-        chapter_page_number = 0
         for chapter in self.chapters:
             chunks = TextParser(chapter.text_content, self.chunk_size).parse()
-            if not chunks or len(chunks) == 0:
+            if not chunks:
                 continue
-            if chapter.chapter_name != prev_chapter_name:
-                prev_chapter_name = chapter.chapter_name
-                chapter_page_number = 1
-                chapter_number += 1
-                logger.info(
-                    f"chapter: {chapter.chapter_name}, page_count: {len(chunks)}, chapter_number: {chapter_number}"
-                )
-            for chunk_text in chunks:
+            chapter_number += 1
+            logger.info(
+                "chapter: %s, page_count: %d, chapter_number: %d",
+                chapter.chapter_name, len(chunks), chapter_number,
+            )
+            for chapter_page_number, chunk_text in enumerate(chunks, start=1):
                 result.append(
                     ChunkedText(
                         text=chunk_text,
@@ -42,6 +43,5 @@ class BookChunker:
                         xhtml_file=chapter.xhtml_file,
                     )
                 )
-                chapter_page_number += 1
                 total_page += 1
         return result

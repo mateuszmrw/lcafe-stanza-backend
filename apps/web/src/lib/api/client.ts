@@ -24,33 +24,42 @@ function extractDetail(data: unknown): string | null {
   return String(detail)
 }
 
-let isRefreshing = false
+// Single in-flight refresh promise. When multiple requests hit 401 at once,
+// they all await the same refresh instead of returning null or racing to
+// refresh. The old `isRefreshing` boolean caused cascading logouts — waiters
+// saw `isRefreshing=true` and got `null`, then redirected to /login even
+// though a valid refresh was about to succeed.
+let refreshInFlight: Promise<string | null> | null = null
 
 async function doRefresh(): Promise<string | null> {
-  if (isRefreshing) return null
-  isRefreshing = true
-  try {
-    const { refreshToken, setTokens, clearTokens } = getAuthStore()
-    if (!refreshToken) {
-      // Do NOT call clearTokens() here — the store may not be hydrated yet,
-      // so refreshToken being null doesn't mean the user has no session.
-      return null
+  if (refreshInFlight) return refreshInFlight
+
+  refreshInFlight = (async () => {
+    try {
+      const { refreshToken, setTokens, clearTokens } = getAuthStore()
+      if (!refreshToken) {
+        // Do NOT call clearTokens() — the store may not be hydrated yet,
+        // so refreshToken being null doesn't mean the user has no session.
+        return null
+      }
+      const res = await fetch(`${env.apiUrl}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      })
+      if (!res.ok) {
+        clearTokens()
+        return null
+      }
+      const data = await res.json()
+      setTokens(data.access_token, data.refresh_token)
+      return data.access_token as string
+    } finally {
+      refreshInFlight = null
     }
-    const res = await fetch(`${env.apiUrl}/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    })
-    if (!res.ok) {
-      clearTokens()
-      return null
-    }
-    const data = await res.json()
-    setTokens(data.access_token, data.refresh_token)
-    return data.access_token
-  } finally {
-    isRefreshing = false
-  }
+  })()
+
+  return refreshInFlight
 }
 
 export async function apiClient<T = unknown>(

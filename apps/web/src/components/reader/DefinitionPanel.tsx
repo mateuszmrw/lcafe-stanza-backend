@@ -15,6 +15,7 @@ import { useReaderStore } from "@/src/stores/reader"
 import { getLanguageLabel } from "@/src/lib/language-flags"
 import { cn } from "@/src/lib/cn"
 import { STATUSES } from "@/src/lib/status-colors"
+import { getLemmaKey } from "@/src/lib/tokens"
 import { READER_CONFIG_DEFAULTS, type ReaderConfig } from "@/src/lib/api/languages"
 
 const MAX_SELECTION_CHARS = 500
@@ -772,8 +773,9 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
   }, [isSelectionMode, token])
 
   // Vocabulary key: lemma (since migration 0042 the words table is keyed by lemma)
-  const lemmaKey = token?.l || token?.w || ""
-  // For translation/dictionary: use lemma when available
+  const lemmaKey = token ? getLemmaKey(token) : ""
+  // For translation/dictionary: use lemma when available (not lowercased so
+  // the user sees the natural dictionary form)
   const lookupWord = token ? (token.l || token.w) : ""
   // What to translate: the selection (if any) or the lookup word
   const translationTarget = isSelectionMode ? selectedText : (lookupWord || null)
@@ -820,7 +822,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
             items: old.items.map((p) => ({
               ...p,
               tokens: p.tokens.map((t) =>
-                (t.l || t.w) === lemmaKey ? { ...t, status: newStatus } : t
+                getLemmaKey(t) === lemmaKey ? { ...t, status: newStatus } : t
               ),
             })),
           }

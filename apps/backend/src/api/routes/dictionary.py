@@ -108,6 +108,8 @@ async def lookup_word(
             entries = []
         return slug, entries
 
+    # active_sources is already ordered by (priority DESC, slug) from the repo.
+    # asyncio.gather preserves task order, so results below follow that priority.
     tasks = [_call_adapter(source.slug) for source in active_sources]
     adapter_results: list[tuple[str, list[DictionaryEntry]]] = await asyncio.gather(*tasks)
 

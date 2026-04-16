@@ -9,6 +9,7 @@ export interface BookListItem {
   language_id: number
   created_at: string
   coverage_pct: number | null
+  mastered_pct: number | null
 }
 
 export interface BookDetail extends BookListItem {

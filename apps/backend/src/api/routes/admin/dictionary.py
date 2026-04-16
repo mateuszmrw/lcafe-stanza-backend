@@ -243,7 +243,21 @@ async def upload_dictionary(
     tgt = target_lang.lower()
     deleted = 0
 
-    content = await file.read()
+    # Read in chunks with a hard cap so a malicious or accidental 5GB upload
+    # can't OOM the server. Wiktionary dumps are typically 100-500MB.
+    _MAX_DICT_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB cap
+    _CHUNK = 1024 * 1024  # 1 MB
+    content_parts: list[bytes] = []
+    total = 0
+    while chunk := await file.read(_CHUNK):
+        total += len(chunk)
+        if total > _MAX_DICT_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Dictionary file too large. Max {_MAX_DICT_UPLOAD_BYTES // (1024 * 1024)} MB.",
+            )
+        content_parts.append(chunk)
+    content = b"".join(content_parts)
     rows = parse(content, src, tgt)
 
     custom_repo = _CUSTOM_REPOS.get(source_slug)

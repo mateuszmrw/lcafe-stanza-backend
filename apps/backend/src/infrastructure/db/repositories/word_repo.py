@@ -218,14 +218,14 @@ class WordRepository:
         if sentence_context is not None:
             on_conflict_set["sentence_context"] = sentence_context
 
-        stmt = (
-            pg_insert(Word)
-            .values(**values)
-            .on_conflict_do_update(
-                index_elements=["user_id", "language_id", "word"],
-                set_=on_conflict_set,
-            )
-            .returning(Word)
-        )
+        stmt = pg_insert(Word).values(**values)
+        # Increment lookup_count on every upsert so the difficulty scorer has
+        # a real signal. The count reflects how many times the user has actively
+        # engaged with this word (changed its status or hint).
+        on_conflict_set["lookup_count"] = Word.lookup_count + 1
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["user_id", "language_id", "word"],
+            set_=on_conflict_set,
+        ).returning(Word)
         result = await session.execute(stmt)
         return result.scalar_one()

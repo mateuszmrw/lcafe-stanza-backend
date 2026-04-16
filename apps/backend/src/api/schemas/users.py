@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class UserResponse(BaseModel):
@@ -22,8 +22,15 @@ class UserResponse(BaseModel):
 
 
 class UserUpdateRequest(BaseModel):
-    username: str | None = None
-    password: str | None = None
+    username: str | None = Field(default=None, min_length=3, max_length=255)
+    password: str | None = Field(default=None, min_length=8, max_length=255)
+
+    @field_validator("username")
+    @classmethod
+    def _username_not_blank(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("Username cannot be blank")
+        return v
 
 
 class ActiveLanguageRequest(BaseModel):

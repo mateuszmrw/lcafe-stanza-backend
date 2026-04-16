@@ -115,6 +115,16 @@ async def upsert_word_status(
     await session.commit()
     await invalidate_stats_cache(redis, current_user.id)
     await invalidate_coverage_cache(redis, current_user.id)
+
+    # Recompute difficulty for this word now that lookup_count just incremented.
+    # Resolve language code for form-count lookup (Russian / Wiktionary tables).
+    lang_row = await session.get(Language, body.language_id)
+    if lang_row:
+        await _difficulty_service.recompute_for_words(
+            session, current_user.id, body.language_id, lang_row.code, [body.word]
+        )
+        await session.commit()
+
     return WordResponse.model_validate(word)
 
 

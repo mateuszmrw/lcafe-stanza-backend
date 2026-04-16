@@ -36,7 +36,12 @@ class DailyActivityRepository:
         user_id: uuid.UUID,
         language_id: int,
     ) -> tuple[int, int]:
-        """Return (current_streak, longest_streak) in days."""
+        """Return (current_streak, longest_streak) in days.
+
+        Current streak = consecutive days of activity ending today or yesterday
+        (yesterday counts so the streak doesn't reset until the user misses a full day).
+        Longest streak = longest run of consecutive active days ever recorded.
+        """
         result = await session.execute(
             sa.select(DailyActivity.date)
             .where(
@@ -45,34 +50,33 @@ class DailyActivityRepository:
             )
             .order_by(DailyActivity.date.desc())
         )
+        # Distinct, sorted descending — most recent first.
         dates = [row[0] for row in result.fetchall()]
-
         if not dates:
             return 0, 0
 
         today = date.today()
-        current = 0
-        longest = 0
-        streak = 0
-        prev: date | None = None
+        yesterday = today - timedelta(days=1)
 
-        for d in dates:
-            if prev is None:
-                # Start of iteration — check if today or yesterday to open current streak
-                if d >= today - timedelta(days=1):
-                    current = 1
-                streak = 1
-            else:
-                if prev - d == timedelta(days=1):
-                    streak += 1
-                    if d >= today - timedelta(days=1):
-                        current = streak
+        # Current streak: only alive if the most recent activity was today or yesterday.
+        current = 0
+        if dates[0] == today or dates[0] == yesterday:
+            current = 1
+            for i in range(1, len(dates)):
+                if dates[i - 1] - dates[i] == timedelta(days=1):
+                    current += 1
                 else:
-                    streak = 1
-                    if current == 0 and d >= today - timedelta(days=1):
-                        current = 1
-            longest = max(longest, streak)
-            prev = d
+                    break
+
+        # Longest streak: walk the full list counting consecutive runs.
+        longest = 1
+        run = 1
+        for i in range(1, len(dates)):
+            if dates[i - 1] - dates[i] == timedelta(days=1):
+                run += 1
+                longest = max(longest, run)
+            else:
+                run = 1
 
         return current, longest
 

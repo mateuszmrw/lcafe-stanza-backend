@@ -14,6 +14,11 @@ def _make_engine():
         settings.database_url,
         echo=settings.debug,
         pool_pre_ping=True,
+        # Sized for a single FastAPI worker + ARQ worker pool sharing this engine.
+        # Raise pool_size if you run with more uvicorn workers or bigger worker concurrency.
+        pool_size=20,
+        max_overflow=10,
+        pool_recycle=3600,
     )
 
 
