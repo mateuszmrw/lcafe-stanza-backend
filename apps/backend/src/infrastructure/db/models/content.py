@@ -69,6 +69,7 @@ class Book(Base):
     tts_status: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("'none'")
     )
+    cover_image_path: Mapped[Optional[str]] = mapped_column(sa.Text)
 
 
 class ContentPage(Base):

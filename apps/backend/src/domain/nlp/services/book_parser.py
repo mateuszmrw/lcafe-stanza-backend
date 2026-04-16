@@ -3,9 +3,10 @@ import logging
 import re
 import zipfile
 from typing import List
+from urllib.parse import unquote
 
 from bs4 import BeautifulSoup
-from ebooklib import ITEM_DOCUMENT, ITEM_NAVIGATION, epub
+from ebooklib import ITEM_COVER, ITEM_DOCUMENT, ITEM_IMAGE, ITEM_NAVIGATION, epub
 from pydantic import BaseModel
 
 from src.domain.nlp.models import ParsedNavigationItem
@@ -51,7 +52,14 @@ class BookParser:
     # reference markers (¹, ², etc.) that would otherwise fuse to the preceding
     # word and confuse tokenization. Rare scientific notation (H₂O, x²) is a
     # known trade-off — language-learning content almost never uses it.
-    _KILL_TAGS = {"script", "style", "head", "rp", "rt", "nav", "aside", "sup", "sub"}
+    # `img`/`svg`/`picture` are stripped so inline base64 data URIs (used by
+    # some publishers for DRM watermarks or inline artwork) don't leak into
+    # the extracted text. Actual cover images are handled separately via
+    # `extract_cover_image()`.
+    _KILL_TAGS = {
+        "script", "style", "head", "rp", "rt", "nav", "aside", "sup", "sub",
+        "img", "svg", "picture",
+    }
 
     # Invisible characters that break tokenization if embedded mid-word:
     # soft hyphen, zero-width space/joiners, BOM, word joiner. EPUB publishers
@@ -201,6 +209,11 @@ class BookParser:
         return (truncated or text[:_PREVIEW_MAX_LEN]).rstrip() + "…"
 
     def _extract_text(self, el) -> str:
+        """Instance helper — delegates to the classmethod for backward compat."""
+        return self.extract_element_text(el)
+
+    @classmethod
+    def extract_element_text(cls, el) -> str:
         """Extract plain text preserving natural whitespace.
 
         Uses BeautifulSoup's default ``get_text()`` (no separator, no strip) so
@@ -214,15 +227,63 @@ class BookParser:
 
         Using ``strip=True`` would collapse the latter to ``żewydziedziczamHansa``.
         Using ``separator=" "`` would break the former to ``J akie``.
+
+        Shared with ``FragmentResolver`` so SMIL fragment text and page text
+        normalise identically — divergence here breaks audio alignment.
         """
         raw = el.get_text()
-        raw = raw.replace("\xa0", " ").translate(self._INVISIBLE_CHARS)
+        raw = raw.replace("\xa0", " ").translate(cls._INVISIBLE_CHARS)
         # Collapse horizontal whitespace runs to a single space, then tidy
         # newlines (preserved from <br> → "\n" replacement above).
         raw = _HSPACE_RE.sub(" ", raw)
         raw = _VSPACE_RE.sub("\n", raw)
         raw = _MULTINL_RE.sub("\n", raw)
-        return raw.strip()
+        return cls._strip_drm_watermarks(raw).strip()
+
+    # Detects DRM / publisher watermark tokens embedded as visible text —
+    # typical Polish EPUBs from Legimi / Virtualo carry a line like
+    # ``= = = Lx4oECUXLxxvXGVdaVpuBDlLbl48XjoObFtpXmxeP11tWGhQYVhuXw = =``
+    # at the top/bottom of the book. These aren't `<img>` tags so the
+    # `_KILL_TAGS` strip does not remove them — we have to scrub them from
+    # the extracted text directly.
+    @classmethod
+    def _is_likely_drm_token(cls, token: str) -> bool:
+        """Heuristic: long token in the base64 alphabet with mixed case + digits.
+
+        Natural-language words rarely mix case internally or embed digits,
+        so this pattern is a high-precision signal for watermark tokens.
+        """
+        if len(token) < 24:
+            return False
+        if not all(c.isalnum() or c in "+/" for c in token):
+            return False
+        has_upper = any(c.isupper() for c in token)
+        has_lower = any(c.islower() for c in token)
+        has_digit = any(c.isdigit() for c in token)
+        return has_upper and has_lower and has_digit
+
+    @classmethod
+    def _strip_drm_watermarks(cls, text: str) -> str:
+        """Remove DRM watermark tokens and their ``=`` padding from ``text``.
+
+        Preserves line breaks and unrelated text — if only the watermark is
+        present, the line collapses to an empty string and is dropped.
+        """
+        kept_lines: list[str] = []
+        for line in text.splitlines():
+            kept_tokens: list[str] = []
+            for token in line.split():
+                core = token.strip("=")
+                if not core:
+                    # Pure "=" padding (often separated by spaces) — drop.
+                    continue
+                if cls._is_likely_drm_token(core):
+                    continue
+                kept_tokens.append(token)
+            joined = " ".join(kept_tokens).strip()
+            if joined:
+                kept_lines.append(joined)
+        return "\n".join(kept_lines)
 
     def _is_cover_item(self, item) -> bool:
         """Detect cover/title-page spine items that should be skipped.
@@ -282,6 +343,14 @@ class BookParser:
                 parsed_item = self.parse_document_item(
                     item, spine_index, current_chapter_name
                 )
+                # DRM-only pages (just a watermark token) collapse to empty
+                # after stripping — don't create a chapter/page for them.
+                if not parsed_item.text_content.strip():
+                    logger.info(
+                        "Skipping empty/watermark-only document: %s",
+                        item.get_name(),
+                    )
+                    continue
                 parsed_document_items.append(parsed_item)
 
         return parsed_document_items
@@ -294,3 +363,105 @@ class BookParser:
         """Return True if this EPUB contains SMIL audio overlay files."""
         book = self.read_epub_file()
         return any(True for _ in book.get_items_of_media_type("application/smil+xml"))
+
+    # Map EPUB image media types to the file extension we use on disk.
+    _COVER_EXT_BY_MEDIA_TYPE = {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+        "image/gif": "gif",
+    }
+
+    def extract_cover_image(self) -> tuple[str, bytes] | None:
+        """Locate the book's cover image and return ``(media_type, bytes)``.
+
+        Resolution order follows the EPUB specs, falling back to the HTML
+        cover page as a last resort:
+
+          1. EPUB3 — manifest item with ``properties="cover-image"`` (ebooklib
+             surfaces these as ``ITEM_COVER`` with an ``image/*`` media type).
+          2. EPUB2 — OPF metadata ``<meta name="cover" content="{id}"/>``,
+             resolved to a manifest item by id.
+          3. Fallback — first ``<img>`` referenced by the cover HTML page.
+
+        Returns ``None`` when no cover can be located (no extraction error is
+        fatal — books without covers still import successfully).
+        """
+        try:
+            book = self.read_epub_file()
+        except Exception:
+            logger.exception("Failed to open EPUB for cover extraction")
+            return None
+
+        # 1. EPUB3 cover-image property.
+        for item in book.get_items_of_type(ITEM_COVER):
+            media_type = (getattr(item, "media_type", "") or "").lower()
+            if media_type.startswith("image/"):
+                content = item.get_content()
+                if content:
+                    return (media_type, content)
+
+        # 2. EPUB2 OPF <meta name="cover" content="{id}"/>.
+        try:
+            meta_entries = book.get_metadata("OPF", "cover") or []
+        except Exception:
+            meta_entries = []
+        for entry in meta_entries:
+            # Each entry is a (value, attrs) tuple; attrs holds the referenced id.
+            attrs = entry[1] if len(entry) > 1 and isinstance(entry[1], dict) else {}
+            cover_id = attrs.get("content")
+            if not cover_id:
+                continue
+            item = book.get_item_with_id(cover_id)
+            if item is None:
+                continue
+            media_type = (getattr(item, "media_type", "") or "").lower()
+            if media_type.startswith("image/"):
+                content = item.get_content()
+                if content:
+                    return (media_type, content)
+
+        # 3. Fallback — first <img> on the cover HTML page.
+        for item in book.get_items_of_type(ITEM_DOCUMENT):
+            if not self._is_cover_item(item):
+                continue
+            try:
+                html = item.get_content().decode("utf-8", errors="replace")
+            except Exception:
+                continue
+            soup = BeautifulSoup(html, "html.parser")
+            src: str | None = None
+            img = soup.find("img")
+            if img is not None:
+                raw_src = img.get("src")  # type: ignore[attr-defined]
+                src = raw_src if isinstance(raw_src, str) else None
+            if src is None:
+                # EPUB3 cover pages often use SVG <image xlink:href="…"/>.
+                svg_image = soup.find("image")
+                if svg_image is not None:
+                    raw_src = svg_image.get("xlink:href") or svg_image.get("href")  # type: ignore[attr-defined]
+                    src = raw_src if isinstance(raw_src, str) else None
+            if not src or src.startswith("data:"):
+                continue
+            # Strip any fragment/query and normalise the basename.
+            src_clean = unquote(src).split("#")[0].split("?")[0]
+            basename = src_clean.rsplit("/", 1)[-1].lower()
+            if not basename:
+                continue
+            for img_item in book.get_items_of_type(ITEM_IMAGE):
+                name = (img_item.get_name() or "").lower()
+                if name.endswith(basename) or name.rsplit("/", 1)[-1] == basename:
+                    media_type = (getattr(img_item, "media_type", "") or "").lower()
+                    if media_type.startswith("image/"):
+                        content = img_item.get_content()
+                        if content:
+                            return (media_type, content)
+            break  # only inspect the first cover page
+
+        return None
+
+    @classmethod
+    def cover_extension_for(cls, media_type: str) -> str:
+        """Pick the on-disk file extension for a given cover media type."""
+        return cls._COVER_EXT_BY_MEDIA_TYPE.get(media_type.lower(), "jpg")

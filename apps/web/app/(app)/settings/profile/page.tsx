@@ -218,8 +218,8 @@ export default function ProfilePage() {
               className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 accent-blue-500"
             />
             <span className="text-sm text-zinc-300">
-              Automatically ignore proper nouns
-              <span className="ml-1 text-zinc-500">(names, places — won&apos;t show as new words)</span>
+              Automatically mark proper nouns as well known
+              <span className="ml-1 text-zinc-500">(names, places — counted toward coverage, not surfaced as new words)</span>
             </span>
           </label>
           <button

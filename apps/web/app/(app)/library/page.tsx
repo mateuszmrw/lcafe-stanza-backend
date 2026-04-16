@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Plus, Search, X } from "lucide-react"
-import { listBooks, deleteBook } from "@/src/lib/api/books"
+import { listBooks, deleteBook, realignSmilAudio } from "@/src/lib/api/books"
 import { getStats } from "@/src/lib/api/stats"
 import { getStreak } from "@/src/lib/api/activity"
 import { BookCard, BookCardSkeleton } from "@/src/components/books/BookCard"
@@ -75,17 +75,33 @@ export default function LibraryPage() {
     queryKey: ["books"],
     queryFn: listBooks,
     refetchInterval: (query) => {
-      // Keep polling while any book is processing
+      // Keep polling while any book is processing OR a SMIL realign is running
       const books = query.state.data?.items ?? []
-      return books.some((b) => b.status === "processing" || b.status === "pending")
-        ? 2000
-        : false
+      const importInFlight = books.some(
+        (b) => b.status === "processing" || b.status === "pending"
+      )
+      const realignInFlight = books.some(
+        (b) =>
+          b.audio_overlay_status === "pending" ||
+          b.audio_overlay_status === "in_progress"
+      )
+      return importInFlight || realignInFlight ? 2000 : false
     },
   })
 
   const deleteMutation = useMutation({
     mutationFn: deleteBook,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["books"] }),
+  })
+
+  const realignMutation = useMutation({
+    mutationFn: realignSmilAudio,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["books"] }),
+    onError: (err) => {
+      // Surface backend message (e.g. "SMIL alignment already in progress")
+      const msg = err instanceof Error ? err.message : "Failed to realign audio"
+      window.alert(msg)
+    },
   })
 
   const books = data?.items ?? []
@@ -165,6 +181,10 @@ export default function LibraryPage() {
                   key={book.id}
                   book={book}
                   onDelete={(id) => deleteMutation.mutate(id)}
+                  onRealignAudio={(id) => realignMutation.mutate(id)}
+                  realigningId={
+                    realignMutation.isPending ? realignMutation.variables ?? null : null
+                  }
                 />
               ))}
             </div>

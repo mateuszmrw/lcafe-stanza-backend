@@ -39,6 +39,9 @@ class BookListItem(BaseModel):
     created_at: datetime
     coverage_pct: Optional[int] = None
     mastered_pct: Optional[int] = None
+    has_cover: bool = False
+    has_audio_overlay: bool = False
+    audio_overlay_status: str = "none"
 
     model_config = {"from_attributes": True}
 
@@ -68,6 +71,7 @@ class BookDetailResponse(BaseModel):
     tts_status: str = "none"
     video_id: Optional[str] = None
     source_url: Optional[str] = None
+    has_cover: bool = False
 
 
 class PageResponse(BaseModel):

@@ -39,7 +39,7 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
                 logger.warning("Skipping tokenize_page — page or content item missing: %s", page_uuid)
                 return
 
-            auto_ignore_propn = await _resolve_auto_ignore(
+            auto_known_propn = await _resolve_auto_ignore(
                 session, content_item.user_id, content_item.language_id
             )
 
@@ -60,7 +60,7 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
             }
 
             word_rows = _build_word_rows(
-                token_dicts, content_item.user_id, content_item.language_id, auto_ignore_propn,
+                token_dicts, content_item.user_id, content_item.language_id, auto_known_propn,
                 source_page_id=page_uuid,
             )
             await _word_repo.bulk_upsert(
@@ -137,7 +137,11 @@ async def _load_page_context(
 
 
 async def _resolve_auto_ignore(session, user_id: uuid.UUID, language_id: int) -> bool:
-    """Return the effective auto_ignore_proper_nouns setting for this user/language."""
+    """Return the effective auto_ignore_proper_nouns setting for this user/language.
+
+    When true, proper nouns are auto-marked as well_known on import (so they
+    count toward coverage but aren't surfaced as new words to learn).
+    """
     user = await session.get(User, user_id)
     global_setting = getattr(user, "auto_ignore_proper_nouns", True) if user else True
 
@@ -156,10 +160,16 @@ def _build_word_rows(
     token_dicts: list[dict],
     user_id: uuid.UUID,
     language_id: int,
-    auto_ignore_propn: bool,
+    auto_known_propn: bool,
     source_page_id: uuid.UUID | None = None,
 ) -> list[dict]:
-    """Deduplicate tokens and build word rows for bulk upsert."""
+    """Deduplicate tokens and build word rows for bulk upsert.
+
+    Tokens that don't need active learning (proper nouns, numerals,
+    single-character function words like Polish "w" / "a") are auto-marked
+    "well_known" so they still count toward coverage stats but don't show
+    up as new words to learn.
+    """
     seen: set[str] = set()
     rows: list[dict] = []
     for t in token_dicts:
@@ -172,8 +182,8 @@ def _build_word_rows(
         # Single-character lemmas are almost always function words in Slavic
         # languages ("a", "i", "o", "u", "w", "z" in Polish) — not useful as
         # tracked vocabulary.
-        is_ignored = (
-            (auto_ignore_propn and pos == "PROPN")
+        is_auto_known = (
+            (auto_known_propn and pos == "PROPN")
             or pos == "NUM"
             or len(lemma) == 1
         )
@@ -188,7 +198,7 @@ def _build_word_rows(
             "feats": t.get("feats", ""),
             "dep_head": t.get("dep_head", 0),
             "dep_rel": t.get("dep_rel", ""),
-            "status": "ignored" if is_ignored else "new",
+            "status": "well_known" if is_auto_known else "new",
             "source_page_id": source_page_id,
             "source_sentence_index": t.get("si"),
         })

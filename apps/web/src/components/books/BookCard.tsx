@@ -2,8 +2,8 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { MoreVertical, Trash2 } from "lucide-react"
-import type { BookListItem } from "@/src/lib/api/books"
+import { MoreVertical, RefreshCw, Trash2 } from "lucide-react"
+import { bookCoverUrl, type BookListItem } from "@/src/lib/api/books"
 import { Badge } from "@/src/components/ui/Badge"
 import { Spinner } from "@/src/components/ui/Spinner"
 import { cn } from "@/src/lib/cn"
@@ -21,12 +21,26 @@ const STATUS_BADGE: Record<
 interface BookCardProps {
   book: BookListItem
   onDelete: (id: string) => void
+  onRealignAudio?: (id: string) => void
+  realigningId?: string | null
 }
 
-export function BookCard({ book, onDelete }: BookCardProps) {
+export function BookCard({ book, onDelete, onRealignAudio, realigningId }: BookCardProps) {
   const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+
+  // SMIL realignment is only meaningful for books that have an audio overlay
+  // and aren't currently being aligned (the worker would 409).
+  const canRealignAudio =
+    Boolean(onRealignAudio) &&
+    book.has_audio_overlay &&
+    book.audio_overlay_status !== "pending" &&
+    book.audio_overlay_status !== "in_progress"
+  const isRealigning =
+    realigningId === book.id ||
+    book.audio_overlay_status === "pending" ||
+    book.audio_overlay_status === "in_progress"
 
   const badge = STATUS_BADGE[book.status] ?? { variant: "zinc" as const, label: book.status }
   const initials = book.title
@@ -34,6 +48,12 @@ export function BookCard({ book, onDelete }: BookCardProps) {
     .slice(0, 2)
     .map((w) => w[0]?.toUpperCase() ?? "")
     .join("")
+
+  // `has_cover` is the authoritative flag from the server. A network/404 here
+  // falls back to the initials placeholder via the <img> onError handler.
+  const [coverFailed, setCoverFailed] = useState(false)
+  const coverSrc =
+    book.has_cover && !coverFailed ? bookCoverUrl(book.id, book.has_cover) : null
 
   const isReadable = book.status === "completed" || book.status === "processing"
 
@@ -51,9 +71,19 @@ export function BookCard({ book, onDelete }: BookCardProps) {
       )}
       onClick={handleCardClick}
     >
-      {/* Cover placeholder */}
-      <div className="mb-4 flex h-32 w-full items-center justify-center rounded-lg bg-zinc-800 text-2xl font-bold text-zinc-500">
-        {initials || "?"}
+      {/* Cover */}
+      <div className="mb-4 flex h-32 w-full items-center justify-center overflow-hidden rounded-lg bg-zinc-800 text-2xl font-bold text-zinc-500">
+        {coverSrc ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={coverSrc}
+            alt={book.title}
+            className="h-full w-full object-cover"
+            onError={() => setCoverFailed(true)}
+          />
+        ) : (
+          <span>{initials || "?"}</span>
+        )}
       </div>
 
       {/* Title */}
@@ -119,15 +149,35 @@ export function BookCard({ book, onDelete }: BookCardProps) {
           <MoreVertical className="h-4 w-4" />
         </button>
         {menuOpen && (
-          <div className="absolute right-0 top-8 z-10 min-w-[120px] rounded-lg border border-zinc-700 bg-zinc-800 py-1 shadow-xl">
+          <div className="absolute right-0 top-8 z-10 min-w-[160px] rounded-lg border border-zinc-700 bg-zinc-800 py-1 shadow-xl">
             {!confirmDelete ? (
-              <button
-                onClick={() => setConfirmDelete(true)}
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-400 transition hover:bg-zinc-700"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete
-              </button>
+              <>
+                {canRealignAudio && (
+                  <button
+                    onClick={() => {
+                      onRealignAudio?.(book.id)
+                      setMenuOpen(false)
+                    }}
+                    disabled={isRealigning}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-300 transition hover:bg-zinc-700 disabled:opacity-50"
+                    title="Re-run SMIL audio alignment (keeps extracted audio files)"
+                  >
+                    {isRealigning ? (
+                      <Spinner className="h-3.5 w-3.5" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    {isRealigning ? "Realigning…" : "Realign audio"}
+                  </button>
+                )}
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-400 transition hover:bg-zinc-700"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete
+                </button>
+              </>
             ) : (
               <div className="px-3 py-2">
                 <p className="mb-2 text-xs text-zinc-400">Delete this book?</p>

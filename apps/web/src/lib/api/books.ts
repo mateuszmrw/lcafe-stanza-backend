@@ -1,3 +1,5 @@
+import { env } from "@/src/env"
+import { getAuthStore } from "@/src/stores/auth"
 import { apiClient, apiUpload } from "./client"
 
 export interface BookListItem {
@@ -10,6 +12,9 @@ export interface BookListItem {
   created_at: string
   coverage_pct: number | null
   mastered_pct: number | null
+  has_cover: boolean
+  has_audio_overlay: boolean
+  audio_overlay_status: "none" | "pending" | "in_progress" | "complete" | "failed"
 }
 
 export interface BookDetail extends BookListItem {
@@ -20,11 +25,20 @@ export interface BookDetail extends BookListItem {
   register: string | null
   has_audio: boolean
   audio_duration_ms: number | null
-  has_audio_overlay: boolean
-  audio_overlay_status: string
   tts_status: "none" | "pending" | "in_progress" | "complete" | "failed"
   video_id: string | null
   source_url: string | null
+}
+
+/** Build the authenticated URL for a book cover image. Safe to use as `<img src>` —
+ *  the access token is carried as a query param since <img> cannot set headers.
+ *  Returns null when the book has no cover so callers can fall back to a placeholder. */
+export function bookCoverUrl(bookId: string, hasCover: boolean): string | null {
+  if (!hasCover) return null
+  const { accessToken } = getAuthStore()
+  const url = new URL(`${env.apiUrl}/books/${bookId}/cover`)
+  if (accessToken) url.searchParams.set("token", accessToken)
+  return url.toString()
 }
 
 export interface TokenWithStatus {
@@ -93,6 +107,12 @@ export async function uploadBook(
 
 export async function deleteBook(id: string): Promise<void> {
   await apiClient(`/books/${id}`, { method: "DELETE" })
+}
+
+/** Re-run SMIL audio alignment for an existing book. The extracted audio
+ *  files on disk are reused; only sentence_alignments rows are rebuilt. */
+export async function realignSmilAudio(id: string): Promise<{ status: string }> {
+  return apiClient(`/books/${id}/audio/realign-smil`, { method: "POST" })
 }
 
 export async function getBookPages(

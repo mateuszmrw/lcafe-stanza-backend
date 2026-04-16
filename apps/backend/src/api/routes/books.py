@@ -140,6 +140,7 @@ async def upload_book(
 
     # Parse + chunk at upload time (fast). Workers only handle tokenization.
     has_smil = False
+    cover: tuple[str, bytes] | None = None
     try:
         if is_pdf:
             parsed = PdfParser(abs_path).parse()
@@ -147,6 +148,9 @@ async def upload_book(
             book_parser = BookParser(abs_path, "spine")
             parsed = book_parser.parse()
             has_smil = book_parser.detect_smil_overlays()
+            # Cover extraction is best-effort — a failure here must not block
+            # the import, so the parser swallows exceptions and returns None.
+            cover = book_parser.extract_cover_image()
         chunks = BookChunker(parsed).chunk()
     except Exception as exc:
         os.remove(abs_path)
@@ -186,6 +190,25 @@ async def upload_book(
         if has_smil:
             book.has_audio_overlay = True
             book.audio_overlay_status = "pending"
+        if cover is not None:
+            media_type, cover_bytes = cover
+            ext = BookParser.cover_extension_for(media_type)
+            cover_dir = os.path.join(
+                settings.storage_root, "books", str(content_item.id)
+            )
+            os.makedirs(cover_dir, exist_ok=True)
+            cover_rel = os.path.join("books", str(content_item.id), f"cover.{ext}")
+            cover_abs = os.path.join(settings.storage_root, cover_rel)
+            try:
+                with open(cover_abs, "wb") as f:
+                    f.write(cover_bytes)
+                book.cover_image_path = cover_rel
+            except OSError:
+                # Cover is best-effort — log and proceed without it.
+                import logging
+                logging.getLogger().exception(
+                    "Failed to write cover image for book %s", content_item.id
+                )
 
     content_item.status = "processing"
     await session.commit()
@@ -236,12 +259,39 @@ async def list_books(
             completed_ids,
         )
 
+    # Batch-load cover + audio overlay flags for every book in one query.
+    book_ids = [item.id for item in items]
+    book_meta_map: dict = {}
+    if book_ids:
+        book_rows = await session.execute(
+            sa.select(
+                Book.content_item_id,
+                Book.cover_image_path,
+                Book.has_audio_overlay,
+                Book.audio_overlay_status,
+            ).where(Book.content_item_id.in_(book_ids))
+        )
+        book_meta_map = {
+            row.content_item_id: (
+                row.cover_image_path,
+                row.has_audio_overlay,
+                row.audio_overlay_status,
+            )
+            for row in book_rows
+        }
+
     book_items = []
     for item in items:
         bi = BookListItem.model_validate(item)
         pair = coverage_map.get(item.id)
         if pair is not None:
             bi.coverage_pct, bi.mastered_pct = pair
+        meta = book_meta_map.get(item.id)
+        if meta is not None:
+            cover_path, has_overlay, overlay_status = meta
+            bi.has_cover = bool(cover_path)
+            bi.has_audio_overlay = bool(has_overlay)
+            bi.audio_overlay_status = overlay_status or "none"
         book_items.append(bi)
 
     return BookListResponse(items=book_items, total=len(items))
@@ -293,6 +343,7 @@ async def get_book(
         tts_status=book.tts_status if book else "none",
         video_id=video_id,
         source_url=content_item.source_url,
+        has_cover=bool(book and book.cover_image_path),
     )
 
 
@@ -434,17 +485,104 @@ async def delete_book(
     book = await session.get(Book, book_id)
     file_path = book.file_path if book else None
     audio_file_path = book.audio_file_path if book else None
+    cover_image_path = book.cover_image_path if book else None
 
     await _content_service.delete_book(session, book_id)
     await session.commit()
 
     settings = get_settings()
-    for rel_path in filter(None, [file_path, audio_file_path]):
+    for rel_path in filter(None, [file_path, audio_file_path, cover_image_path]):
         abs_path = os.path.join(settings.storage_root, rel_path)
         try:
             os.remove(abs_path)
         except OSError:
             pass  # File already gone or never written — not fatal
+
+
+# ---------------------------------------------------------------------------
+# Cover image
+# ---------------------------------------------------------------------------
+
+
+_COVER_MEDIA_TYPE_BY_EXT = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
+
+@router.get("/{book_id}/cover")
+async def get_book_cover(
+    book_id: uuid.UUID,
+    request: Request,
+    token: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Stream a book's cover image.
+
+    Accepts ``Bearer`` header or ``?token=`` query param — the latter is
+    required by ``<img>`` tags, which can't set custom headers.
+    """
+    import jwt as pyjwt
+
+    raw_token = token or ""
+    if not raw_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            raw_token = auth_header[len("Bearer "):]
+
+    user_id: uuid.UUID | None = None
+    if raw_token:
+        try:
+            payload = decode_token(raw_token)
+            if payload.get("type") == "access":
+                user_id = uuid.UUID(payload["sub"])
+        except (pyjwt.InvalidTokenError, ValueError):
+            pass
+
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    book = await session.get(Book, book_id)
+    if not book or not book.cover_image_path:
+        raise HTTPException(status_code=404, detail="No cover for this book")
+
+    settings = get_settings()
+    # Resolve symlinks before the prefix check to block directory traversal.
+    abs_path = os.path.realpath(
+        os.path.join(settings.storage_root, book.cover_image_path)
+    )
+    expected_prefix = os.path.realpath(
+        os.path.join(settings.storage_root, "books", str(book_id))
+    )
+    if not abs_path.startswith(expected_prefix + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail="Cover not found on disk")
+
+    ext = os.path.splitext(abs_path)[1].lower()
+    media_type = _COVER_MEDIA_TYPE_BY_EXT.get(ext, "application/octet-stream")
+    file_size = os.path.getsize(abs_path)
+
+    def _iter_file(path: str, chunk_size: int = 65536):
+        with open(path, "rb") as f:
+            while chunk := f.read(chunk_size):
+                yield chunk
+
+    return StreamingResponse(
+        _iter_file(abs_path),
+        media_type=media_type,
+        headers={
+            "Content-Length": str(file_size),
+            "Cache-Control": "private, max-age=86400",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -646,6 +784,45 @@ async def stream_audio(
             "Content-Disposition": f'inline; filename="audio{ext}"',
         },
     )
+
+
+@router.post("/{book_id}/audio/realign-smil", status_code=202)
+async def realign_smil_audio(
+    book_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+    arq_pool: ArqRedis = Depends(get_arq_pool),
+) -> dict:
+    """Re-run SMIL alignment for an existing book without re-importing pages.
+
+    Clears existing sentence alignments (extracted audio files on disk are
+    re-used) and re-enqueues the align_smil_audio worker task. Use this after
+    fixing alignment logic / debugging unresolved fragments.
+    """
+    content_item = await _content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    book = await session.get(Book, book_id)
+    if not book or not book.has_audio_overlay:
+        raise HTTPException(
+            status_code=404, detail="Book has no SMIL audio overlay to realign"
+        )
+
+    if book.audio_overlay_status in ("pending", "in_progress"):
+        raise HTTPException(
+            status_code=409, detail="SMIL alignment already in progress"
+        )
+
+    # Drop existing alignments so the re-run inserts fresh rows. Audio files
+    # on disk are kept — the extractor is idempotent and will re-use them.
+    await _audio_repo.delete_alignments_for_book(session, book_id)
+
+    book.audio_overlay_status = "pending"
+    await session.commit()
+
+    await arq_pool.enqueue_job("align_smil_audio", str(book_id))
+    return {"status": "queued"}
 
 
 @router.delete("/{book_id}/audio", status_code=204)

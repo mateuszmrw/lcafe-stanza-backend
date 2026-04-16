@@ -91,7 +91,13 @@ async def align_smil_audio(ctx: dict, book_id: str) -> None:
         # Resolve each SMIL fragment to (page_id, sentence_index)
         resolver = FragmentResolver(epub_path)
         alignments_by_page: dict[uuid.UUID, list[dict]] = {}
-        unresolved = 0
+        # Split unresolved counter by failure mode so we can tell which to fix.
+        id_not_found = 0
+        sentence_not_matched = 0
+        # Keep up to N samples of each failure mode for diagnostics.
+        _SAMPLE_CAP = 5
+        id_samples: list[str] = []
+        sent_samples: list[str] = []
 
         # Build epub_rel → storage-relative path mapping
         storage_audio_map: dict[str, str] = {
@@ -102,12 +108,21 @@ async def align_smil_audio(ctx: dict, book_id: str) -> None:
         for frag in fragments:
             frag_text = resolver.resolve_text(frag.xhtml_file, frag.fragment_id)
             if frag_text is None:
-                unresolved += 1
+                id_not_found += 1
+                if len(id_samples) < _SAMPLE_CAP:
+                    id_samples.append(f"{frag.xhtml_file}#{frag.fragment_id}")
                 continue
 
-            match = _find_sentence(frag_text, xhtml_index.get(frag.xhtml_file, []))
+            candidates = xhtml_index.get(frag.xhtml_file, [])
+            match = _find_sentence(frag_text, candidates)
             if match is None:
-                unresolved += 1
+                sentence_not_matched += 1
+                if len(sent_samples) < _SAMPLE_CAP:
+                    snippet = (frag_text[:80] + "…") if len(frag_text) > 80 else frag_text
+                    sent_samples.append(
+                        f"{frag.xhtml_file}#{frag.fragment_id} "
+                        f"({len(candidates)} candidates): {snippet!r}"
+                    )
                 continue
 
             page_id, si = match
@@ -120,8 +135,16 @@ async def align_smil_audio(ctx: dict, book_id: str) -> None:
                 }
             )
 
+        unresolved = id_not_found + sentence_not_matched
         if unresolved:
-            logger.warning("SMIL alignment: %d unresolved fragments", unresolved)
+            logger.warning(
+                "SMIL alignment: %d unresolved (id_not_found=%d, sentence_not_matched=%d)",
+                unresolved, id_not_found, sentence_not_matched,
+            )
+            for sample in id_samples:
+                logger.warning("  id_not_found sample: %s", sample)
+            for sample in sent_samples:
+                logger.warning("  sentence_not_matched sample: %s", sample)
 
         # Check if cancelled while we were processing
         if await redis.exists(f"audio-align:{book_uuid}:cancel"):
