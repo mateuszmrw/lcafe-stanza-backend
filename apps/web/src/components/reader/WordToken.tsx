@@ -12,6 +12,7 @@ interface WordTokenProps {
   isActive: boolean
   isHighlighted: boolean
   isAudioActive?: boolean
+  isPhraseToken?: boolean
   onClick: (token: TokenWithStatus, e: React.MouseEvent<HTMLSpanElement>) => void
 }
 
@@ -21,6 +22,7 @@ export function WordToken({
   isActive,
   isHighlighted,
   isAudioActive,
+  isPhraseToken,
   onClick,
 }: WordTokenProps) {
   const isWord = !NON_WORD_POS.has(token.pos) && token.w.trim().length > 0
@@ -55,6 +57,7 @@ export function WordToken({
         getTokenClass(token.status, token.d),
         isActive && "ring-2 ring-blue-400 ring-offset-1 ring-offset-zinc-950",
         isHighlighted && "bg-blue-400/25 ring-1 ring-inset ring-blue-300/60",
+        isPhraseToken && !isHighlighted && "bg-emerald-500/30",
         isAudioActive && "underline decoration-amber-400 decoration-2 underline-offset-2",
       )}
     >

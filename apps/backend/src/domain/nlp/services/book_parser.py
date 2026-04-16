@@ -1,5 +1,6 @@
 import io
 import logging
+import re
 import zipfile
 from typing import List
 
@@ -8,6 +9,24 @@ from ebooklib import ITEM_DOCUMENT, ITEM_NAVIGATION, epub
 from pydantic import BaseModel
 
 from src.domain.nlp.models import ParsedNavigationItem
+
+# Collapse runs of horizontal whitespace (spaces, tabs, ZW whitespace) but
+# preserve \n so <br>-induced line breaks survive for sentence segmentation.
+_HSPACE_RE = re.compile(r"[^\S\n]+")
+# Trim horizontal whitespace around newlines and collapse repeated newlines.
+_VSPACE_RE = re.compile(r"[ \t]*\n[ \t]*")
+_MULTINL_RE = re.compile(r"\n{2,}")
+
+# Generic placeholder chapter names that carry no information for the reader
+# sidebar (our own fallback plus common publisher placeholders in several
+# languages). When we see one of these, we derive a preview from the content.
+_GENERIC_CHAPTER_RE = re.compile(
+    r"^\s*(unknown chapter|untitled|no name|bez nazwy|без названия|без назви|sin t[ií]tulo|sans titre|ohne titel|senza titolo)\b",
+    re.IGNORECASE,
+)
+# Split point for first-sentence preview (handles Polish/European punctuation).
+_SENTENCE_END_RE = re.compile(r"[.!?…]")
+_PREVIEW_MAX_LEN = 50
 
 logger = logging.getLogger()
 
@@ -28,8 +47,22 @@ class BookParser:
 
     # Block-level tags — each becomes its own paragraph (separated by \n\n).
     _BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "section"}
-    # Tags removed entirely (content discarded).
-    _KILL_TAGS = {"script", "style", "head", "rp", "rt", "nav", "aside"}
+    # Tags removed entirely (content discarded). `sup`/`sub` drop footnote
+    # reference markers (¹, ², etc.) that would otherwise fuse to the preceding
+    # word and confuse tokenization. Rare scientific notation (H₂O, x²) is a
+    # known trade-off — language-learning content almost never uses it.
+    _KILL_TAGS = {"script", "style", "head", "rp", "rt", "nav", "aside", "sup", "sub"}
+
+    # Invisible characters that break tokenization if embedded mid-word:
+    # soft hyphen, zero-width space/joiners, BOM, word joiner. EPUB publishers
+    # use these for hyphenation hints, bidi control, or DRM watermarking.
+    _INVISIBLE_CHARS = str.maketrans("", "", "\u00AD\u200B\u200C\u200D\u2060\uFEFF")
+
+    # Filename substrings that mark cover/title pages. Covers typically wrap a
+    # single <img> but sometimes carry a visible base64 DRM watermark, so we
+    # skip them from tokenization entirely. Cover image display is a separate
+    # feature (see .claude/specs/20260416-cover-image-display-spec.md).
+    _COVER_NAME_HINTS = ("cover", "titlepage", "title-page", "title_page")
 
     def read_epub_file(self):
         # Some EPUBs (common on macOS) store META-INF/container.xml with non-standard
@@ -77,30 +110,135 @@ class BookParser:
         for tag in soup(list(self._KILL_TAGS)):
             tag.decompose()
 
+        # Look for an explicit heading BEFORE we mutate paragraph elements
+        # below. This is the most reliable signal for the chapter title when
+        # the TOC entry is a placeholder like "Bez nazwy-1".
+        heading_text = self._extract_first_heading(soup)
+
         # Collect leaf block elements (those with no nested block descendants)
         # to avoid duplicating text from parent containers.
         blocks: list[str] = []
         for el in soup.find_all(self._BLOCK_TAGS):
             if el.find(self._BLOCK_TAGS):
                 continue  # parent container — its children will be visited instead
-            text = el.get_text(" ", strip=True).replace("\xa0", " ")
+            for br in el.find_all("br"):
+                br.replace_with("\n")
+            text = self._extract_text(el)
             if text:
                 blocks.append(text)
 
         # Fallback: no block elements found (e.g. plain text or unusual markup).
         if not blocks:
-            raw = soup.get_text(" ", strip=True).replace("\xa0", " ")
+            for br in soup.find_all("br"):
+                br.replace_with("\n")
+            raw = self._extract_text(soup)
             blocks = [line.strip() for line in raw.splitlines() if line.strip()]
 
         text_content = "\n\n".join(blocks)
+        effective_name = self._derive_chapter_name(chapter_name, heading_text, text_content)
         return ParsedDocumentItem(
             text_content=text_content,
             spine=spine,
             name=item.get_name(),
             type=item.get_type(),
-            chapter_name=chapter_name,
+            chapter_name=effective_name,
             xhtml_file=item.get_name(),
         )
+
+    def _derive_chapter_name(
+        self, original: str, heading: str, text_content: str
+    ) -> str:
+        """Replace placeholder chapter names with the best available signal.
+
+        Preference order when the TOC entry is a placeholder ("Bez nazwy-1",
+        "Unknown Chapter", "Untitled", …):
+          1. The document's first heading tag (<h1>…<h6>). This is the
+             publisher's intended title even when it's not wired into the TOC.
+          2. A truncated first-sentence preview of the body text. Useful for
+             diary-style books where date headers ("CZWARTEK, 18 MAJA") sit at
+             the top of each entry as styled paragraphs rather than headings.
+        Legitimate chapter names are preserved verbatim.
+        """
+        if not original or _GENERIC_CHAPTER_RE.match(original):
+            if heading:
+                return self._truncate(heading)
+            preview = self._first_sentence_preview(text_content)
+            if preview:
+                return preview
+        return original
+
+    def _extract_first_heading(self, soup) -> str:
+        """Return the text of the first <h1>–<h6> in document order, if any."""
+        for el in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+            for br in el.find_all("br"):
+                br.replace_with(" ")
+            text = self._extract_text(el)
+            if text:
+                return text
+        return ""
+
+    @classmethod
+    def _first_sentence_preview(cls, text: str) -> str:
+        """Extract up to the first sentence (or _PREVIEW_MAX_LEN chars)."""
+        # First non-empty line as a starting point — the body's opening paragraph.
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if line:
+                break
+        else:
+            return ""
+
+        match = _SENTENCE_END_RE.search(line)
+        candidate = line[: match.start()].strip() if match else line
+        return cls._truncate(candidate)
+
+    @staticmethod
+    def _truncate(text: str) -> str:
+        """Clip to _PREVIEW_MAX_LEN chars at a word boundary, with ellipsis."""
+        if len(text) <= _PREVIEW_MAX_LEN:
+            return text
+        truncated = text[:_PREVIEW_MAX_LEN].rsplit(" ", 1)[0]
+        return (truncated or text[:_PREVIEW_MAX_LEN]).rstrip() + "…"
+
+    def _extract_text(self, el) -> str:
+        """Extract plain text preserving natural whitespace.
+
+        Uses BeautifulSoup's default ``get_text()`` (no separator, no strip) so
+        the original inter-tag whitespace survives. This is the only way to
+        handle both cases correctly:
+
+          * drop-caps ``<span>J</span>akie`` — HTML has no whitespace between
+            the tags, so the output is ``Jakie`` (concatenated).
+          * prose ``że <i>wydziedziczam</i> Hansa`` — HTML has spaces in the
+            text nodes, so the output is ``że wydziedziczam Hansa`` (spaced).
+
+        Using ``strip=True`` would collapse the latter to ``żewydziedziczamHansa``.
+        Using ``separator=" "`` would break the former to ``J akie``.
+        """
+        raw = el.get_text()
+        raw = raw.replace("\xa0", " ").translate(self._INVISIBLE_CHARS)
+        # Collapse horizontal whitespace runs to a single space, then tidy
+        # newlines (preserved from <br> → "\n" replacement above).
+        raw = _HSPACE_RE.sub(" ", raw)
+        raw = _VSPACE_RE.sub("\n", raw)
+        raw = _MULTINL_RE.sub("\n", raw)
+        return raw.strip()
+
+    def _is_cover_item(self, item) -> bool:
+        """Detect cover/title-page spine items that should be skipped.
+
+        Matches on filename substring (most publishers name cover files
+        ``cover.xhtml``, ``titlepage.xhtml``, etc.) and on EPUB3 manifest
+        ``properties="cover-image"``. Conservative by design — only triggers
+        on unambiguous cover indicators, never on content pages.
+        """
+        name = (item.get_name() or "").lower()
+        if any(hint in name for hint in self._COVER_NAME_HINTS):
+            return True
+        props = getattr(item, "properties", None) or []
+        if any("cover" in str(p).lower() for p in props):
+            return True
+        return False
 
     def parse_navigation_items(self, item) -> List[ParsedNavigationItem]:
         parsed_navigation_items = []
@@ -134,6 +272,10 @@ class BookParser:
         for spine_index, (item_id, _) in enumerate(book.spine):
             item = book.get_item_with_id(item_id)
             if item.get_type() == ITEM_DOCUMENT:
+                if self._is_cover_item(item):
+                    logger.info("Skipping cover/title page from tokenization: %s", item.get_name())
+                    continue
+
                 if item.get_name() in nav_lookup:
                     current_chapter_name = nav_lookup[item.get_name()]
 

@@ -14,6 +14,9 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 
+_INVISIBLE_CHARS = str.maketrans("", "", "\u00AD\u200B\u200C\u200D\u2060\uFEFF")
+
+
 class FragmentResolver:
     def __init__(self, epub_path: str) -> None:
         self._epub_path = epub_path
@@ -36,7 +39,12 @@ class FragmentResolver:
         for el in soup.find_all(id=True):
             el_id = el.get("id")
             if el_id:
-                text = el.get_text(" ", strip=True).replace("\xa0", " ")
+                # Match BookParser: empty separator so intra-word inline spans
+                # (drop-caps, styled letter fragments) don't fuse with spaces
+                # and mis-align sentence matching against the tokenized text.
+                for br in el.find_all("br"):
+                    br.replace_with("\n")
+                text = el.get_text(strip=True).replace("\xa0", " ").translate(_INVISIBLE_CHARS)
                 if text:
                     index[el_id] = text
         return index

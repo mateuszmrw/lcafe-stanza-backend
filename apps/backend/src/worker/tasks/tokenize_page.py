@@ -169,7 +169,14 @@ def _build_word_rows(
             continue
         seen.add(lemma)
         pos = t.get("pos") or ""
-        is_ignored = (auto_ignore_propn and pos == "PROPN") or pos == "NUM"
+        # Single-character lemmas are almost always function words in Slavic
+        # languages ("a", "i", "o", "u", "w", "z" in Polish) — not useful as
+        # tracked vocabulary.
+        is_ignored = (
+            (auto_ignore_propn and pos == "PROPN")
+            or pos == "NUM"
+            or len(lemma) == 1
+        )
         rows.append({
             "user_id": user_id,
             "language_id": language_id,

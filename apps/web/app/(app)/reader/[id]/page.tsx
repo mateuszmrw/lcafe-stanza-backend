@@ -440,6 +440,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
                 page={page}
                 totalPages={totalPages}
                 languageCode={language}
+                languageId={book.language_id}
                 onPageChange={setPage}
                 onFinish={() => {
                   if (autoMarkRead && book) autoAdvanceNewWords(book.language_id)

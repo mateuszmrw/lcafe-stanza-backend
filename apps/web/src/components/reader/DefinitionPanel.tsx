@@ -740,6 +740,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
     onSuccess: () => {
       setPhraseSaved(true)
       setTimeout(() => setPhraseSaved(false), 2000)
+      queryClient.invalidateQueries({ queryKey: ["phrases", languageId] })
     },
   })
 
@@ -857,12 +858,14 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
   const anchorStyle = useMemo((): React.CSSProperties => {
     if (!panelAnchor || typeof window === "undefined") return {}
     const w = window.innerWidth
-    if (w >= 1024) return {} // desktop uses CSS side panel
+    const isDesktop = w >= 1024
 
-    const PANEL_W = Math.min(w - 24, 340) // 12px margin each side
+    const PANEL_W = Math.min(w - 24, isDesktop ? 420 : 340)
     const GAP = 8
     const spaceBelow = window.innerHeight - panelAnchor.bottom - GAP
-    const maxH = Math.min(window.innerHeight * 0.55, 420)
+    const maxH = isDesktop
+      ? Math.min(window.innerHeight * 0.75, 600)
+      : Math.min(window.innerHeight * 0.55, 420)
 
     const top =
       spaceBelow >= maxH
@@ -936,22 +939,15 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
 
   return (
     <>
-      {/* Backdrop — mobile/tablet only */}
+      {/* Backdrop */}
       <div
-        className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+        className="fixed inset-0 z-30 bg-black/50"
         onClick={clearActive}
       />
 
       <aside
         style={anchorStyle}
-        className={cn(
-          // Base: flex column, dark bg, fixed overlay
-          "flex flex-col bg-zinc-900 fixed z-40",
-          // Phone + tablet (<lg): floating card near the word, positioned by anchorStyle
-          "rounded-2xl shadow-2xl ring-1 ring-zinc-800",
-          // Desktop (lg+): inline side panel — not fixed, full height
-          "lg:relative lg:inset-auto lg:z-auto lg:h-full lg:w-80 lg:rounded-none lg:ring-0 lg:border-l lg:border-zinc-800 lg:max-h-none lg:shadow-none"
-        )}
+        className="flex flex-col bg-zinc-900 fixed z-40 rounded-2xl shadow-2xl ring-1 ring-zinc-800 overflow-hidden"
       >
 
         {/* Header */}
@@ -1254,13 +1250,13 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
                               }}
                               disabled={statusMutation.isPending}
                               className={cn(
-                                "mt-1 flex w-full items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition",
+                                "mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border px-4 py-2.5 text-sm font-medium transition",
                                 hintSaved
                                   ? "border-emerald-700 bg-emerald-900/30 text-emerald-400"
-                                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                                  : "border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:bg-zinc-800 hover:text-zinc-100"
                               )}
                             >
-                              {hintSaved ? "Saved as hint · Learning" : "Save translation + Learning"}
+                              {hintSaved ? "Saved ✓" : "Save words"}
                             </button>
                           )
                         })()}
@@ -1270,7 +1266,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
                 )}
 
                 {/* Synonyms */}
-                <div>
+                <div className="mt-4 pt-3 border-t border-zinc-800">
                   {synonymsMutation.isIdle && (
                     <button
                       onClick={() => synonymsMutation.mutate()}

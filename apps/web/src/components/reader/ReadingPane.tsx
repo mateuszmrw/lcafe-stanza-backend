@@ -1,14 +1,16 @@
 "use client"
 
-import { Fragment, useEffect, useRef, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react"
 import type { TokenWithStatus } from "@/src/lib/api/books"
 import { getBookPages } from "@/src/lib/api/books"
+import { listPhrases, type PhraseResponse } from "@/src/lib/api/phrases"
 import { useReaderStore } from "@/src/stores/reader"
 import { useAudioPlayerStore } from "@/src/stores/audioPlayer"
 import { useReaderSettings, FONT_SIZE_CLASS, LINE_SPACING_CLASS, TEXT_WIDTH_CLASS } from "@/src/stores/readerSettings"
 import { sentenceText } from "@/src/lib/sentences"
+import { cn } from "@/src/lib/cn"
 import { WordToken } from "./WordToken"
 import { PageOptionsMenu } from "./PageOptionsMenu"
 
@@ -19,6 +21,30 @@ function isNoSpaceLanguage(code: string): boolean {
   return code.startsWith("zh") || code === "ja"
 }
 
+function buildPhraseTokenSet(
+  tokens: TokenWithStatus[],
+  phrases: PhraseResponse[],
+  noSpace: boolean,
+): Set<number> {
+  const result = new Set<number>()
+  const sep = noSpace ? "" : " "
+  for (const phrase of phrases) {
+    const target = phrase.text.trim()
+    for (let start = 0; start < tokens.length; start++) {
+      let text = ""
+      for (let end = start; end < tokens.length; end++) {
+        text = end === start ? tokens[end].w : text + sep + tokens[end].w
+        if (text.trim() === target) {
+          for (let i = start; i <= end; i++) result.add(i)
+          break
+        }
+        if (text.length > target.length + 2) break
+      }
+    }
+  }
+  return result
+}
+
 interface ParagraphsProps {
   tokens: TokenWithStatus[]
   activeToken: TokenWithStatus | null
@@ -27,6 +53,7 @@ interface ParagraphsProps {
   activeSentenceIndex: number | null
   fontSizeClass: string
   lineSpacingClass: string
+  phraseTokenIndices: Set<number>
   onTokenClick: (token: TokenWithStatus, e: React.MouseEvent<HTMLSpanElement>) => void
 }
 
@@ -38,6 +65,7 @@ function Paragraphs({
   activeSentenceIndex,
   fontSizeClass,
   lineSpacingClass,
+  phraseTokenIndices,
   onTokenClick,
 }: ParagraphsProps) {
   // Group by paragraph while preserving flat index
@@ -57,6 +85,7 @@ function Paragraphs({
               idx >= selectionRange[0] &&
               idx <= selectionRange[1]
             const prevToken = paraTokens[i - 1]?.token
+            const prevIdx = paraTokens[i - 1]?.idx
             const prevW = prevToken?.w ?? ""
             const isClosingPunct = /^[.,!?;:)\]»…\-—–。，！？；：」』]/.test(token.w)
             const prevIsOpeningPunct = /^[(\[«「『]$/.test(prevW)
@@ -64,11 +93,16 @@ function Paragraphs({
             const isActiveSentence = activeSentenceIndex !== null && token.si === activeSentenceIndex
             const prevIsActiveSentence = activeSentenceIndex !== null && prevToken?.si === activeSentenceIndex
             const spaceIsActive = spaceBefore && isActiveSentence && prevIsActiveSentence
+            const isSpaceInPhrase = spaceBefore && phraseTokenIndices.has(idx) && prevIdx !== undefined && phraseTokenIndices.has(prevIdx)
+            const spaceClass = cn(
+              spaceIsActive && "underline decoration-amber-400 decoration-2 underline-offset-2",
+              isSpaceInPhrase && "bg-emerald-500/30",
+            )
             return (
               <Fragment key={`${pi}-${token.si}-${i}`}>
                 {spaceBefore && (
-                  spaceIsActive
-                    ? <span className="underline decoration-amber-400 decoration-2 underline-offset-2"> </span>
+                  spaceClass
+                    ? <span className={spaceClass}> </span>
                     : " "
                 )}
                 <WordToken
@@ -77,6 +111,7 @@ function Paragraphs({
                   isActive={activeToken?.w === token.w && activeToken?.si === token.si}
                   isHighlighted={isHighlighted}
                   isAudioActive={isActiveSentence}
+                  isPhraseToken={phraseTokenIndices.has(idx)}
                   onClick={onTokenClick}
                 />
               </Fragment>
@@ -93,11 +128,12 @@ interface ReadingPaneProps {
   page: number
   totalPages: number
   languageCode: string
+  languageId: number
   onPageChange: (page: number) => void
   onFinish?: () => void
 }
 
-export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChange, onFinish }: ReadingPaneProps) {
+export function ReadingPane({ bookId, page, totalPages, languageCode, languageId, onPageChange, onFinish }: ReadingPaneProps) {
   const noWordSpacing = isNoSpaceLanguage(languageCode)
   const { activeToken, selectedText, setActiveToken, setSelectedText, setPanelAnchor, setSentenceContext, clearActive } = useReaderStore()
   // Select individual slices so audioPlayer tick() (fires 5x/sec) doesn't
@@ -140,7 +176,21 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
       query.state.data?.items[0]?.status === "pending" ? 3000 : false,
   })
 
+  const { data: phrasesData } = useQuery({
+    queryKey: ["phrases", languageId],
+    queryFn: () => listPhrases(languageId, undefined, 1, 500),
+    staleTime: 30_000,
+  })
+
   const currentPage = data?.items[0]
+
+  const phraseTokenIndices = useMemo(() => {
+    if (!currentPage || !phrasesData) return new Set<number>()
+    const pagePhrase = phrasesData.items.filter(
+      (p) => p.book_id === bookId && p.page === page,
+    )
+    return buildPhraseTokenSet(currentPage.tokens, pagePhrase, noWordSpacing)
+  }, [currentPage, phrasesData, bookId, page, noWordSpacing])
 
   // Restore scroll position once data loads for this page
   useEffect(() => {
@@ -308,6 +358,7 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, onPageChan
                 activeSentenceIndex={activeSentenceIndex}
                 fontSizeClass={FONT_SIZE_CLASS[fontSize]}
                 lineSpacingClass={LINE_SPACING_CLASS[lineSpacing]}
+                phraseTokenIndices={phraseTokenIndices}
                 onTokenClick={handleTokenClick}
               />
             )}
