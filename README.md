@@ -6,6 +6,15 @@ Think LingQ / Readlang / LWT — but on your own hardware, with your data, no su
 
 This is a personal project. I'm not looking for users or contributors and I won't be promoting it or providing support. If you find it useful, feel free to run it. The code is here; that's all.
 
+## Use these instead
+
+Slovo is heavily inspired by two excellent, actively maintained, community-supported projects. If you're looking for a self-hosted LingQ-style reader you can actually rely on, use one of these — they're more polished, better tested, and have real communities behind them:
+
+- **[LinguaCafe](https://github.com/simjanos-dev/LinguaCafe)** — full-featured, polished UI, active community, broad language coverage.
+- **[Lute (v3)](https://github.com/LuteOrg/lute-v3)** — mature LWT descendant, lightweight, well-documented, great for extensive reading.
+
+I built Slovo to scratch my own itch (lemma-keyed vocab, Stanza dependency parsing, EPUB3 SMIL audio, YouTube sync, Anki export with the shape *I* want). It's not a replacement for those tools — it's a personal fork of the idea. Go use LinguaCafe or Lute.
+
 ---
 
 ## Features
