@@ -137,6 +137,24 @@ class AudioRepository:
             for row in result
         ]
 
+    async def count_alignments_for_book(
+        self, session: AsyncSession, book_id: uuid.UUID
+    ) -> int:
+        from src.infrastructure.db.models.content import ContentPage
+
+        result = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(SentenceAlignment)
+            .where(
+                SentenceAlignment.page_id.in_(
+                    sa.select(ContentPage.id).where(
+                        ContentPage.content_item_id == book_id
+                    )
+                )
+            )
+        )
+        return result or 0
+
     async def delete_alignments_for_book(
         self, session: AsyncSession, book_id: uuid.UUID
     ) -> None:

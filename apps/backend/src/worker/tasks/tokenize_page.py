@@ -12,16 +12,18 @@ from src.infrastructure.db.models.providers import Provider
 from src.infrastructure.db.models.users import User, UserLanguageProfile
 from src.infrastructure.db.repositories.word_repo import WordRepository
 from src.infrastructure.stanza.client import StanzaClient
+from src.domain.content.import_service import (
+    COMPLETED_PAGES_KEY as _COMPLETED_KEY,
+    FINALIZING_KEY as _FINALIZING_KEY,
+    TOKEN_COUNT_KEY as _TOKEN_COUNT_KEY,
+    TOTAL_PAGES_KEY as _TOTAL_KEY,
+)
 from src.worker.events import publish_import_event
 
 logger = logging.getLogger(__name__)
 
 _word_repo = WordRepository()
 
-_TOTAL_KEY = "book:{book_id}:total_pages"
-_COMPLETED_KEY = "book:{book_id}:completed_pages"
-_TOKEN_COUNT_KEY = "book:{book_id}:token_count"
-_FINALIZING_KEY = "book:{book_id}:finalizing"
 _REDIS_TTL = 86400  # 24 h
 
 

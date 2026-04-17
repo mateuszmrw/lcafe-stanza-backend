@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from functools import lru_cache
 
 import jwt
 import sqlalchemy as sa
@@ -12,7 +11,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core import get_settings
 from src.domain.auth.services.jwt import decode_token
 from src.domain.nlp.models.token import Token
 from src.domain.nlp.services.tokenizer import Tokenizer
@@ -22,24 +20,14 @@ from src.infrastructure.db.models.languages import LanguageNlpConfig
 from src.infrastructure.db.models.providers import Provider
 from src.infrastructure.db.models.users import User
 from src.infrastructure.stanza.adapter import StanzaNlpAdapter
-from src.infrastructure.stanza.client import (
-    StanzaClient,
-    StanzaConfig,
-    get_stanza_client,
-)
+from src.infrastructure.stanza.client import StanzaClient
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
-@lru_cache()
-def get_stanza_client_dependency() -> StanzaClient:
-    settings = get_settings()
-    config = StanzaConfig(
-        languages=settings.languages,
-        model_dir=settings.model_dir,
-        use_gpu=settings.use_gpu,
-    )
-    return get_stanza_client(config)
+def get_stanza_client_dependency(request: Request) -> StanzaClient:
+    """Return the app's StanzaClient — created once in lifespan."""
+    return request.app.state.stanza
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

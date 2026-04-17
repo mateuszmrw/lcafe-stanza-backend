@@ -173,14 +173,27 @@ class StanzaClient:
         self.loaded_languages = {}
 
 
-_instance = None
+_instance: StanzaClient | None = None
 _lock = threading.Lock()
 
 
 def get_stanza_client(config: StanzaConfig) -> StanzaClient:
+    """Return the process-wide StanzaClient, creating it if needed.
+
+    Prefer constructing the client eagerly in the app lifespan and sharing it
+    via `app.state.stanza`. This function remains for ARQ workers and legacy
+    callers that don't have an app instance.
+    """
     global _instance
     if _instance is None:
         with _lock:
             if _instance is None:
                 _instance = StanzaClient(config)
     return _instance
+
+
+def set_stanza_client(client: StanzaClient) -> None:
+    """Register an already-constructed client as the process-wide singleton."""
+    global _instance
+    with _lock:
+        _instance = client

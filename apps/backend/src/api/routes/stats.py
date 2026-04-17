@@ -1,19 +1,27 @@
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_current_user, get_db, get_redis
-from src.infrastructure.db.models.content import ContentItem, ContentPage
-from src.infrastructure.db.models.languages import Language
 from src.infrastructure.db.models.users import User
-from src.infrastructure.db.models.word_frequencies import WordFrequency
-from src.infrastructure.db.models.words import Word
+from src.infrastructure.db.repositories.content_page_repo import ContentPageRepository
+from src.infrastructure.db.repositories.content_repo import ContentRepository
+from src.infrastructure.db.repositories.language_repo import LanguageRepository
+from src.infrastructure.db.repositories.word_frequency_repo import (
+    WordFrequencyRepository,
+)
+from src.infrastructure.db.repositories.word_repo import WordRepository
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 _CACHE_TTL = 300  # 5 minutes
+
+_language_repo = LanguageRepository()
+_word_repo = WordRepository()
+_word_freq_repo = WordFrequencyRepository()
+_content_repo = ContentRepository()
+_page_repo = ContentPageRepository()
 
 
 class KnownOverTimePoint(BaseModel):
@@ -48,93 +56,34 @@ async def get_stats(
     if cached:
         return StatsResponse.model_validate_json(cached)
 
-    lang_result = await session.execute(
-        sa.select(Language.id).where(Language.code == language_code)
-    )
-    lang_row = lang_result.one_or_none()
-    if not lang_row:
-        raise HTTPException(status_code=404, detail=f"Language '{language_code}' not found")
-    language_id: int = lang_row[0]
-
-    # Word counts by status
-    counts_result = await session.execute(
-        sa.select(Word.status, sa.func.count().label("cnt"))
-        .where(Word.user_id == current_user.id, Word.language_id == language_id)
-        .group_by(Word.status)
-    )
-    word_counts: dict[str, int] = {row.status: row.cnt for row in counts_result}
-
-    # Known words over time (cumulative)
-    day_expr = sa.func.date_trunc("day", Word.created_at).label("day")
-    known_over_time_result = await session.execute(
-        sa.select(
-            day_expr,
-            sa.func.sum(sa.func.count())
-            .over(order_by=day_expr)
-            .label("known_cumulative"),
+    language = await _language_repo.find_by_code(session, language_code)
+    if not language:
+        raise HTTPException(
+            status_code=404, detail=f"Language '{language_code}' not found"
         )
-        .where(
-            Word.user_id == current_user.id,
-            Word.language_id == language_id,
-            Word.status.in_(["known", "well_known"]),
-        )
-        .group_by(day_expr)
-        .order_by(day_expr)
+    language_id = language.id
+
+    word_counts = await _word_repo.count_by_status(
+        session, current_user.id, language_id
     )
+
     known_over_time = [
-        KnownOverTimePoint(
-            date=str(row.day.date()) if hasattr(row.day, "date") else str(row.day)[:10],
-            known_cumulative=int(row.known_cumulative),
+        KnownOverTimePoint(date=date_str, known_cumulative=count)
+        for date_str, count in await _word_repo.known_over_time(
+            session, current_user.id, language_id
         )
-        for row in known_over_time_result
     ]
 
-    # Frequency coverage — check if any freq data exists for this language
-    freq_exists = await session.scalar(
-        sa.select(sa.func.count())
-        .select_from(WordFrequency)
-        .where(WordFrequency.language_code == language_code)
-        .limit(1)
-    )
-
-    if freq_exists:
+    if await _word_freq_repo.has_entries(session, language_code):
         async def _tier_coverage(tier_size: int) -> float | None:
-            """Return fraction of the top-N most frequent words the user knows,
-            where N is the actual number of entries in the frequency table for
-            this language capped at tier_size. Returns None if the table has
-            no entries in that tier.
-            """
-            # Actual number of distinct lemmas in this tier (may be < tier_size
-            # if the imported frequency list is short).
-            total = await session.scalar(
-                sa.select(sa.func.count())
-                .select_from(WordFrequency)
-                .where(
-                    WordFrequency.language_code == language_code,
-                    WordFrequency.rank <= tier_size,
-                )
-            ) or 0
+            total = await _word_freq_repo.count_in_tier(
+                session, language_code, tier_size
+            )
             if total == 0:
                 return None
-
-            known = await session.scalar(
-                sa.select(sa.func.count())
-                .select_from(Word)
-                .join(
-                    WordFrequency,
-                    sa.and_(
-                        WordFrequency.lemma == Word.lemma,
-                        WordFrequency.language_code == language_code,
-                        WordFrequency.rank <= tier_size,
-                    ),
-                )
-                .where(
-                    Word.user_id == current_user.id,
-                    Word.language_id == language_id,
-                    Word.status.in_(["known", "well_known"]),
-                )
-            ) or 0
-
+            known = await _word_freq_repo.count_known_in_tier(
+                session, current_user.id, language_id, language_code, tier_size
+            )
             return round(min(known / total, 1.0), 4)
 
         frequency_coverage = FrequencyCoverage(
@@ -145,28 +94,12 @@ async def get_stats(
     else:
         frequency_coverage = FrequencyCoverage(top_1k=None, top_5k=None, top_10k=None)
 
-    # Books total
-    books_total = await session.scalar(
-        sa.select(sa.func.count())
-        .select_from(ContentItem)
-        .where(
-            ContentItem.user_id == current_user.id,
-            ContentItem.language_id == language_id,
-            ContentItem.type == "book",
-        )
-    ) or 0
-
-    # Pages read (tokenized pages)
-    pages_read = await session.scalar(
-        sa.select(sa.func.count())
-        .select_from(ContentPage)
-        .join(ContentItem, ContentItem.id == ContentPage.content_item_id)
-        .where(
-            ContentItem.user_id == current_user.id,
-            ContentItem.language_id == language_id,
-            ContentPage.status == "ready",
-        )
-    ) or 0
+    books_total = await _content_repo.count_books_for_user_language(
+        session, current_user.id, language_id
+    )
+    pages_read = await _page_repo.count_ready_for_user_language(
+        session, current_user.id, language_id
+    )
 
     response = StatsResponse(
         language_code=language_code,

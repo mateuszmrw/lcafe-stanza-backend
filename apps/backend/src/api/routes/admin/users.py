@@ -1,6 +1,5 @@
 import uuid
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,13 +28,35 @@ async def list_users(
 async def update_user(
     user_id: uuid.UUID,
     body: UserAdminUpdateRequest,
-    _: User = Depends(require_admin),
+    current_admin: User = Depends(require_admin),
     session: AsyncSession = Depends(get_db),
 ) -> UserAdminResponse:
-    result = await session.execute(sa.select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    user = await _user_repo.find_by_id(session, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    editing_self = user_id == current_admin.id
+    if editing_self and body.role is not None and body.role != current_admin.role:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot change your own role. Ask another admin.",
+        )
+    if editing_self and body.is_active is False:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot deactivate your own account.",
+        )
+    if (
+        user.role == "admin"
+        and body.role is not None
+        and body.role != "admin"
+    ):
+        admin_count = await _user_repo.count_admins(session)
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot demote the last admin. Promote another user first.",
+            )
 
     if body.role is not None:
         user.role = body.role
@@ -57,10 +78,10 @@ async def create_user(
     _: User = Depends(require_admin),
     session: AsyncSession = Depends(get_db),
 ) -> UserAdminResponse:
-    existing = await session.execute(
-        sa.select(User).where(sa.or_(User.email == body.email, User.username == body.username))
+    existing = await _user_repo.find_by_email_or_username(
+        session, body.email, body.username
     )
-    if existing.scalar_one_or_none():
+    if existing:
         raise HTTPException(status_code=409, detail="Email or username already taken")
 
     user = User(
@@ -84,16 +105,13 @@ async def delete_user(
 ) -> None:
     if user_id == current_admin.id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
-    result = await session.execute(sa.select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    user = await _user_repo.find_by_id(session, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     # Prevent deleting the last admin — instance would become unrecoverable.
     if user.role == "admin":
-        admin_count = await session.scalar(
-            sa.select(sa.func.count()).select_from(User).where(User.role == "admin")
-        ) or 0
+        admin_count = await _user_repo.count_admins(session)
         if admin_count <= 1:
             raise HTTPException(
                 status_code=400,

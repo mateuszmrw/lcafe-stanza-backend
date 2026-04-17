@@ -95,3 +95,63 @@ class ContentRepository:
             .where(ContentItem.id == content_item_id)
             .values(**values)
         )
+
+    async def get_books_meta_by_ids(
+        self, session: AsyncSession, content_item_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[str | None, bool, str | None]]:
+        """Return {id: (cover_image_path, has_audio_overlay, audio_overlay_status)} for the given books."""
+        if not content_item_ids:
+            return {}
+        rows = await session.execute(
+            sa.select(
+                Book.content_item_id,
+                Book.cover_image_path,
+                Book.has_audio_overlay,
+                Book.audio_overlay_status,
+            ).where(Book.content_item_id.in_(content_item_ids))
+        )
+        return {
+            row.content_item_id: (
+                row.cover_image_path,
+                row.has_audio_overlay,
+                row.audio_overlay_status,
+            )
+            for row in rows
+        }
+
+    async def count_books_for_user_language(
+        self, session: AsyncSession, user_id: uuid.UUID, language_id: int
+    ) -> int:
+        result = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ContentItem)
+            .where(
+                ContentItem.user_id == user_id,
+                ContentItem.language_id == language_id,
+                ContentItem.type == "book",
+            )
+        )
+        return result or 0
+
+    async def list_book_file_paths_for_user(
+        self, session: AsyncSession, user_id: uuid.UUID
+    ) -> list[str]:
+        """Return every storage-relative file_path/audio_file_path owned by this user."""
+        result = await session.execute(
+            sa.select(Book.file_path, Book.audio_file_path)
+            .join(ContentItem, Book.content_item_id == ContentItem.id)
+            .where(ContentItem.user_id == user_id)
+        )
+        return [p for row in result for p in row if p]
+
+    async def delete_all_for_user(
+        self, session: AsyncSession, user_id: uuid.UUID
+    ) -> int:
+        result = await session.execute(
+            sa.delete(ContentItem).where(ContentItem.user_id == user_id)
+        )
+        return result.rowcount  # type: ignore[return-value]
+
+    async def delete_all(self, session: AsyncSession) -> int:
+        result = await session.execute(sa.delete(ContentItem))
+        return result.rowcount  # type: ignore[return-value]

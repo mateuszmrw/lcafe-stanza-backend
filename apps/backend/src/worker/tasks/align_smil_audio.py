@@ -18,6 +18,7 @@ from src.core.config import get_settings
 from src.domain.audio.extractor import EmbeddedAudioExtractor
 from src.domain.audio.fragment_resolver import FragmentResolver
 from src.domain.audio.smil_parser import SmilParser
+from src.domain.content.import_service import AUDIO_ALIGN_CHANNEL
 from src.infrastructure.db.engine import AsyncSessionFactory
 from src.infrastructure.db.models.content import Book, ContentPage
 from src.infrastructure.db.repositories.audio_repo import AudioRepository
@@ -147,7 +148,7 @@ async def align_smil_audio(ctx: dict, book_id: str) -> None:
                 logger.warning("  sentence_not_matched sample: %s", sample)
 
         # Check if cancelled while we were processing
-        if await redis.exists(f"audio-align:{book_uuid}:cancel"):
+        if await redis.exists(AUDIO_ALIGN_CHANNEL.format(book_id=book_uuid) + ":cancel"):
             logger.info("SMIL alignment cancelled for book %s — discarding results", book_uuid)
             return
 
@@ -171,7 +172,7 @@ async def align_smil_audio(ctx: dict, book_id: str) -> None:
         )
 
         await redis.publish(
-            f"audio-align:{book_uuid}",
+            AUDIO_ALIGN_CHANNEL.format(book_id=book_uuid),
             json.dumps({"event": "complete", "data": {"sentences": total}}),
         )
 
@@ -182,10 +183,9 @@ async def align_smil_audio(ctx: dict, book_id: str) -> None:
             if book:
                 book.audio_overlay_status = "failed"
             await session.commit()
-        import json as _json
         await redis.publish(
-            f"audio-align:{book_uuid}",
-            _json.dumps({"event": "failed", "data": {"error": str(exc)}}),
+            AUDIO_ALIGN_CHANNEL.format(book_id=book_uuid),
+            json.dumps({"event": "failed", "data": {"error": str(exc)}}),
         )
 
 

@@ -1,6 +1,5 @@
 import hashlib
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,10 +8,11 @@ from src.api.dependencies import get_db
 from src.domain.auth.services.jwt import create_access_token, create_refresh_token
 from src.domain.users.models import UserCreate
 from src.domain.users.service import UserService
-from src.infrastructure.db.models.users import User
+from src.infrastructure.db.repositories.user_repo import UserRepository
 
 router = APIRouter(prefix="/setup", tags=["setup"])
 _user_service = UserService()
+_user_repo = UserRepository()
 
 
 class SetupStatus(BaseModel):
@@ -31,10 +31,7 @@ class SetupRegisterResponse(BaseModel):
 
 
 async def _admin_exists(session: AsyncSession) -> bool:
-    result = await session.scalar(
-        sa.select(sa.func.count()).select_from(User).where(User.role == "admin")
-    )
-    return (result or 0) > 0
+    return await _user_repo.count_admins(session) > 0
 
 
 @router.get("/status", response_model=SetupStatus)

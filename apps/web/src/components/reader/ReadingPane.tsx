@@ -1,12 +1,10 @@
 "use client"
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { Fragment, useEffect, useRef, useState } from "react"
 import { ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react"
 import type { TokenWithStatus } from "@/src/lib/api/books"
-import { getBookPages } from "@/src/lib/api/books"
-import { listPhrases, type PhraseResponse } from "@/src/lib/api/phrases"
 import { useReaderStore } from "@/src/stores/reader"
+import { useReaderPageLogic } from "@/src/hooks/useReaderPageLogic"
 import { useAudioPlayerStore } from "@/src/stores/audioPlayer"
 import { useReaderSettings, FONT_SIZE_CLASS, LINE_SPACING_CLASS, TEXT_WIDTH_CLASS } from "@/src/stores/readerSettings"
 import { sentenceText } from "@/src/lib/sentences"
@@ -21,29 +19,6 @@ function isNoSpaceLanguage(code: string): boolean {
   return code.startsWith("zh") || code === "ja"
 }
 
-function buildPhraseTokenSet(
-  tokens: TokenWithStatus[],
-  phrases: PhraseResponse[],
-  noSpace: boolean,
-): Set<number> {
-  const result = new Set<number>()
-  const sep = noSpace ? "" : " "
-  for (const phrase of phrases) {
-    const target = phrase.text.trim()
-    for (let start = 0; start < tokens.length; start++) {
-      let text = ""
-      for (let end = start; end < tokens.length; end++) {
-        text = end === start ? tokens[end].w : text + sep + tokens[end].w
-        if (text.trim() === target) {
-          for (let i = start; i <= end; i++) result.add(i)
-          break
-        }
-        if (text.length > target.length + 2) break
-      }
-    }
-  }
-  return result
-}
 
 interface ParagraphsProps {
   tokens: TokenWithStatus[]
@@ -168,29 +143,12 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, languageId
     return () => { clearTimeout(timer); container.removeEventListener("scroll", handleScroll) }
   }, [bookId, page])
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["book-pages", bookId, page],
-    queryFn: () => getBookPages(bookId, page, 1),
-    placeholderData: (prev) => prev,
-    refetchInterval: (query) =>
-      query.state.data?.items[0]?.status === "pending" ? 3000 : false,
+  const { currentPage, isLoading, phraseTokenIndices } = useReaderPageLogic({
+    bookId,
+    page,
+    languageId,
+    noWordSpacing,
   })
-
-  const { data: phrasesData } = useQuery({
-    queryKey: ["phrases", languageId],
-    queryFn: () => listPhrases(languageId, undefined, 1, 500),
-    staleTime: 30_000,
-  })
-
-  const currentPage = data?.items[0]
-
-  const phraseTokenIndices = useMemo(() => {
-    if (!currentPage || !phrasesData) return new Set<number>()
-    const pagePhrase = phrasesData.items.filter(
-      (p) => p.book_id === bookId && p.page === page,
-    )
-    return buildPhraseTokenSet(currentPage.tokens, pagePhrase, noWordSpacing)
-  }, [currentPage, phrasesData, bookId, page, noWordSpacing])
 
   // Restore scroll position once data loads for this page
   useEffect(() => {

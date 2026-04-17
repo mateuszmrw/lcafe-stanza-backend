@@ -3,6 +3,8 @@ import uuid
 
 from redis.asyncio import Redis
 
+from src.domain.content.import_service import IMPORT_CHANNEL
+
 
 async def publish_import_event(
     redis: Redis,
@@ -14,6 +16,6 @@ async def publish_import_event(
 
     Consumers (the SSE endpoint) subscribe to `import:{content_item_id}`.
     """
-    channel = f"import:{content_item_id}"
+    channel = IMPORT_CHANNEL.format(book_id=content_item_id)
     payload = json.dumps({"event": event_type, "data": data})
     await redis.publish(channel, payload)

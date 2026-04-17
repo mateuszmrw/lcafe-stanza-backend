@@ -15,6 +15,22 @@ class UserRepository:
         result = await session.execute(sa.select(User).where(User.email == email))
         return result.scalar_one_or_none()
 
+    async def find_by_email_or_username(
+        self, session: AsyncSession, email: str, username: str
+    ) -> User | None:
+        result = await session.execute(
+            sa.select(User).where(sa.or_(User.email == email, User.username == username))
+        )
+        return result.scalar_one_or_none()
+
+    async def count_admins(self, session: AsyncSession) -> int:
+        result = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(User)
+            .where(User.role == "admin")
+        )
+        return result or 0
+
     async def find_by_id(
         self, session: AsyncSession, user_id: uuid.UUID
     ) -> User | None:

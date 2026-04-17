@@ -4,21 +4,24 @@ import shutil
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from src.api.dependencies import get_stanza_client_dependency
+from src.api.dependencies import get_stanza_client_dependency, require_admin
 from src.api.schemas.stanza import InstallLanguageRequest
 from src.core.config import get_settings
 from src.infrastructure import StanzaClient
 
-router = APIRouter(prefix="/models")
+router = APIRouter(
+    prefix="/admin/stanza",
+    tags=["admin"],
+    dependencies=[Depends(require_admin)],
+)
 
 
-@router.get("/list")
-def languages(stanza_client: StanzaClient = Depends(get_stanza_client_dependency)):
-    models = stanza_client.list_installed_languages()
-    return JSONResponse(content=models)
+@router.get("/models")
+def list_models(stanza_client: StanzaClient = Depends(get_stanza_client_dependency)):
+    return JSONResponse(content=stanza_client.list_installed_languages())
 
 
-@router.post("/install")
+@router.post("/models")
 def install_model(
     request: InstallLanguageRequest,
     stanza_client: StanzaClient = Depends(get_stanza_client_dependency),
@@ -27,7 +30,7 @@ def install_model(
     return PlainTextResponse(content="Language and dependencies installed correctly")
 
 
-@router.delete("/remove")
+@router.delete("/models")
 def remove_models(stanza_client: StanzaClient = Depends(get_stanza_client_dependency)):
     stanza_client.remove_languages()
     settings = get_settings()

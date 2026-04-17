@@ -6,7 +6,6 @@ import os
 import uuid
 
 import httpx
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -211,16 +210,8 @@ async def record_exposures(
     if not body.lemmas:
         return
 
-    # Bulk increment exposure_count
-    from src.infrastructure.db.models.words import Word
-    await session.execute(
-        sa.update(Word)
-        .where(
-            Word.user_id == current_user.id,
-            Word.language_id == body.language_id,
-            Word.word.in_(body.lemmas),
-        )
-        .values(exposure_count=Word.exposure_count + 1)
+    await _word_repo.bulk_increment_exposure(
+        session, current_user.id, body.language_id, body.lemmas
     )
     await session.commit()
 

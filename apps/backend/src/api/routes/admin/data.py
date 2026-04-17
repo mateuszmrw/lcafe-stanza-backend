@@ -1,7 +1,6 @@
 import os
 import shutil
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -9,11 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_db, get_redis, require_admin
 from src.core import get_settings
-from src.infrastructure.db.models.content import ContentItem
 from src.infrastructure.db.models.users import User
-from src.infrastructure.db.models.words import Word
+from src.infrastructure.db.repositories.content_repo import ContentRepository
+from src.infrastructure.db.repositories.word_repo import WordRepository
 
 router = APIRouter(prefix="/admin/data", tags=["admin"])
+
+_content_repo = ContentRepository()
+_word_repo = WordRepository()
 
 CONFIRMATION_PHRASE = "DELETE ALL DATA"
 
@@ -41,11 +43,8 @@ async def reset_all_data(
             detail=f"Confirmation phrase must be exactly: {CONFIRMATION_PHRASE}",
         )
 
-    words_result = await session.execute(sa.delete(Word))
-    deleted_words = words_result.rowcount
-
-    books_result = await session.execute(sa.delete(ContentItem))
-    deleted_books = books_result.rowcount
+    deleted_words = await _word_repo.delete_all(session)
+    deleted_books = await _content_repo.delete_all(session)
 
     await session.commit()
 

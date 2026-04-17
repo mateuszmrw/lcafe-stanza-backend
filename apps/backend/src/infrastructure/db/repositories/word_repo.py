@@ -117,6 +117,75 @@ class WordRepository:
         result = await session.execute(query.offset((page - 1) * limit).limit(limit))
         return list(result.scalars().all()), total
 
+    async def delete_all_for_user(
+        self, session: AsyncSession, user_id: uuid.UUID
+    ) -> int:
+        result = await session.execute(
+            sa.delete(Word).where(Word.user_id == user_id)
+        )
+        return result.rowcount  # type: ignore[return-value]
+
+    async def delete_all(self, session: AsyncSession) -> int:
+        result = await session.execute(sa.delete(Word))
+        return result.rowcount  # type: ignore[return-value]
+
+    async def bulk_increment_exposure(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        language_id: int,
+        lemmas: list[str],
+    ) -> None:
+        if not lemmas:
+            return
+        await session.execute(
+            sa.update(Word)
+            .where(
+                Word.user_id == user_id,
+                Word.language_id == language_id,
+                Word.word.in_(lemmas),
+            )
+            .values(exposure_count=Word.exposure_count + 1)
+        )
+
+    async def count_by_status(
+        self, session: AsyncSession, user_id: uuid.UUID, language_id: int
+    ) -> dict[str, int]:
+        result = await session.execute(
+            sa.select(Word.status, sa.func.count().label("cnt"))
+            .where(Word.user_id == user_id, Word.language_id == language_id)
+            .group_by(Word.status)
+        )
+        return {row.status: row.cnt for row in result}
+
+    async def known_over_time(
+        self, session: AsyncSession, user_id: uuid.UUID, language_id: int
+    ) -> list[tuple[str, int]]:
+        """Return [(YYYY-MM-DD, cumulative_known_count)] over time."""
+        day_expr = sa.func.date_trunc("day", Word.created_at).label("day")
+        result = await session.execute(
+            sa.select(
+                day_expr,
+                sa.func.sum(sa.func.count())
+                .over(order_by=day_expr)
+                .label("known_cumulative"),
+            )
+            .where(
+                Word.user_id == user_id,
+                Word.language_id == language_id,
+                Word.status.in_(["known", "well_known"]),
+            )
+            .group_by(day_expr)
+            .order_by(day_expr)
+        )
+        points: list[tuple[str, int]] = []
+        for row in result:
+            date_str = (
+                str(row.day.date()) if hasattr(row.day, "date") else str(row.day)[:10]
+            )
+            points.append((date_str, int(row.known_cumulative)))
+        return points
+
     async def bulk_update_status(
         self,
         session: AsyncSession,

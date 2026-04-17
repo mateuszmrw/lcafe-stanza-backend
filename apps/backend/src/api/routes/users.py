@@ -1,29 +1,30 @@
 import os
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_current_user, get_db
-from src.core.config import get_settings
-from src.infrastructure.db.models.content import Book, ContentItem
-from src.infrastructure.db.models.words import Word
 from src.api.schemas.admin import ProviderResponse
 from src.api.schemas.users import ActiveLanguageRequest, ApiKeyResponse, ApiKeyUpsertRequest, ProficiencyUpdateRequest, UserResponse, UserUpdateRequest, VALID_PROFICIENCY_LEVELS
+from src.core.config import get_settings
 from src.domain.users.models import UserUpdate
 from src.domain.users.service import UserService
 from src.infrastructure.db.models.languages import Language
 from src.infrastructure.db.models.users import User
 from src.infrastructure.db.repositories.api_key_repo import ApiKeyRepository
+from src.infrastructure.db.repositories.content_repo import ContentRepository
 from src.infrastructure.db.repositories.provider_repo import ProviderRepository
 from src.infrastructure.db.repositories.user_language_profile_repo import UserLanguageProfileRepository
+from src.infrastructure.db.repositories.word_repo import WordRepository
 
 router = APIRouter(prefix="/users", tags=["users"])
 _user_service = UserService()
 _provider_repo = ProviderRepository()
 _api_key_repo = ApiKeyRepository()
 _lang_profile_repo = UserLanguageProfileRepository()
+_content_repo = ContentRepository()
+_word_repo = WordRepository()
 
 
 async def _build_user_response(user: User, session: AsyncSession) -> UserResponse:
@@ -192,19 +193,12 @@ async def reset_my_data(
         )
 
     # Collect file paths before deletion so we can clean up disk afterwards.
-    result = await session.execute(
-        sa.select(Book.file_path, Book.audio_file_path)
-        .join(ContentItem, Book.content_item_id == ContentItem.id)
-        .where(ContentItem.user_id == current_user.id)
+    file_paths = await _content_repo.list_book_file_paths_for_user(
+        session, current_user.id
     )
-    file_paths = [p for row in result for p in row if p]
 
-    words_result = await session.execute(
-        sa.delete(Word).where(Word.user_id == current_user.id)
-    )
-    books_result = await session.execute(
-        sa.delete(ContentItem).where(ContentItem.user_id == current_user.id)
-    )
+    deleted_words = await _word_repo.delete_all_for_user(session, current_user.id)
+    deleted_books = await _content_repo.delete_all_for_user(session, current_user.id)
     await session.commit()
 
     settings = get_settings()
@@ -217,8 +211,8 @@ async def reset_my_data(
                 pass
 
     return UserDataResetResponse(
-        deleted_books=books_result.rowcount,
-        deleted_words=words_result.rowcount,
+        deleted_books=deleted_books,
+        deleted_words=deleted_words,
     )
 
 

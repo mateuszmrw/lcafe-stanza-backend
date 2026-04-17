@@ -94,6 +94,23 @@ class DictionaryEntryRepository:
         )
         return result.rowcount  # type: ignore[return-value]
 
+    async def delete_by_triple(
+        self,
+        session: AsyncSession,
+        source_lang: str,
+        target_lang: str,
+        source_dict: str,
+    ) -> int:
+        """Delete entries matching (source_lang, target_lang, source_dict)."""
+        result = await session.execute(
+            sa.delete(DictionaryEntry).where(
+                DictionaryEntry.source_lang == source_lang,
+                DictionaryEntry.target_lang == target_lang,
+                DictionaryEntry.source_dict == source_dict,
+            )
+        )
+        return result.rowcount  # type: ignore[return-value]
+
     async def count_by_source_dict(
         self, session: AsyncSession, source_dict: str
     ) -> int:

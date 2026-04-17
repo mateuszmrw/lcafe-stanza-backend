@@ -71,6 +71,50 @@ class WordFrequencyRepository:
         )
         return (count or 0) > 0
 
+    async def count_in_tier(
+        self, session: AsyncSession, language_code: str, tier_max_rank: int
+    ) -> int:
+        """Number of entries ranked at or below tier_max_rank for this language."""
+        result = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(WordFrequency)
+            .where(
+                WordFrequency.language_code == language_code,
+                WordFrequency.rank <= tier_max_rank,
+            )
+        )
+        return result or 0
+
+    async def count_known_in_tier(
+        self,
+        session: AsyncSession,
+        user_id,
+        language_id: int,
+        language_code: str,
+        tier_max_rank: int,
+    ) -> int:
+        """How many of the user's 'known'/'well_known' words fall within this frequency tier."""
+        from src.infrastructure.db.models.words import Word
+
+        result = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(Word)
+            .join(
+                WordFrequency,
+                sa.and_(
+                    WordFrequency.lemma == Word.lemma,
+                    WordFrequency.language_code == language_code,
+                    WordFrequency.rank <= tier_max_rank,
+                ),
+            )
+            .where(
+                Word.user_id == user_id,
+                Word.language_id == language_id,
+                Word.status.in_(["known", "well_known"]),
+            )
+        )
+        return result or 0
+
     async def list_all_stats(
         self, session: AsyncSession
     ) -> list[tuple[str, int]]:

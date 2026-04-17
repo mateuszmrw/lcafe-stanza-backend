@@ -6,7 +6,7 @@ FastAPI + Stanza NLP + ARQ worker service for Slovo.
 
 ```
 src/
-  main.py                          # App factory — lifespan, middleware, _register_routes()
+  main.py                          # App factory — lifespan, middleware, includes every router in api.routes.all_routers
   core/
     config.py                      # Settings (pydantic-settings, @lru_cache)
   api/
@@ -27,14 +27,14 @@ src/
       activity.py                  # POST /activity/record, GET /activity/streak + /calendar
       stats.py                     # GET /stats/{language_code} (Redis-cached 5 min)
       nlp.py                       # POST /nlp/tokenize (legacy, synchronous)
-      stanza.py                    # GET/POST /models (install/list/remove Stanza models)
-      content.py                   # POST /import/{text,website,book} (preview import)
+      youtube.py                   # YouTube preview/import/status/subtitle upload
+      website.py                   # Website preview + article import
       setup.py                     # POST /setup (first-run admin creation)
       health.py                    # GET /health
       admin/
         languages.py               # CRUD /admin/languages + NLP config
         providers.py               # CRUD /admin/providers
-        users.py                   # GET/PATCH/DELETE /admin/users
+        users.py                   # GET/PATCH/POST/DELETE /admin/users
         dictionary.py              # POST /admin/dictionary (Wiktionary import)
         frequencies.py             # POST /admin/frequencies (CSV word frequency import)
         system_keys.py             # CRUD /admin/system-keys (encrypted API keys)
@@ -42,6 +42,8 @@ src/
         llm.py                     # GET/PUT /admin/llm (OpenAI config)
         anki.py                    # GET/PUT /admin/anki (AnkiConnect URL)
         tts.py                     # GET /admin/tts, GET /admin/tts/models (OpenAI-compatible TTS)
+        stanza.py                  # /admin/stanza/models — install / list / remove Stanza models
+        youtube.py                 # /admin/youtube — proxy management
         data.py                    # DELETE /admin/data/reset (requires "DELETE ALL DATA")
     schemas/
       auth.py, books.py, users.py, vocabulary.py, admin.py, grammar.py, audio.py
@@ -106,15 +108,16 @@ src/
         provider_repo.py           # ProviderRepository
         api_key_repo.py            # ApiKeyRepository (AES-256 encrypt/decrypt)
         system_api_key_repo.py     # SystemApiKeyRepository (AES-256)
-        dictionary_repo.py         # DictionaryEntryRepository
-        word_freq_repo.py          # WordFrequencyRepository
+        dictionary_entry_repo.py   # DictionaryEntryRepository
+        dictionary_sources_repo.py # DictionarySourcesRepository
+        word_frequency_repo.py     # WordFrequencyRepository
         audio_repo.py              # AudioRepository (sentence alignments)
         phrase_repo.py             # PhraseRepository
         sentences_repo.py          # SavedSentenceRepository
         activity_repo.py           # DailyActivityRepository
         anki_repo.py               # AnkiRepository (learning/pending words + settings)
     stanza/
-      client.py                    # StanzaClient singleton — get_stanza_client()
+      client.py                    # StanzaClient — constructed in main.lifespan, stored on app.state.stanza
       adapter.py                   # StanzaNlpAdapter (NlpPort impl)
     deepl/client.py                # DeepL HTTP client
     wiktionary/db_adapter.py       # Dictionary lookup from DictionaryEntry table
@@ -129,6 +132,7 @@ src/
       tokenize_page.py             # Tokenize page text, upsert words, finalize book
       align_smil_audio.py          # Parse SMIL, extract audio, build sentence alignments
       generate_tts_audio.py        # Generate DASH TTS audio per page
+      import_youtube_subtitles.py  # yt-dlp subtitle fetch + chunk + tokenize enqueue
 ```
 
 ## Auth pattern
@@ -158,7 +162,7 @@ src/
 
 ## Stanza pipeline
 
-- `StanzaClient` is a global singleton initialized at startup via `get_stanza_client()`.
+- `StanzaClient` is constructed once in `main.lifespan` and stored on `app.state.stanza`. Access it via the `get_stanza_client_dependency` FastAPI dep. Workers fetch the same instance via `get_stanza_client()` (module-level cache kept for worker compatibility).
 - Current processors: `tokenize,pos,lemma,depparse` — all four active. Models download automatically on first startup per language.
 - `tokenize_sync(lang, text)` → `list[dict]` with keys: `w, l, pos, r, g, feats, pi, si, dep_head, dep_rel`.
 - `feats` is Stanza's raw morphological string, e.g. `"Case=Nom|Gender=Masc|Number=Sing"`.

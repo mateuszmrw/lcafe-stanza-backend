@@ -50,6 +50,95 @@ class ContentPageRepository:
         )
         await session.execute(stmt)
 
+    async def count_by_book(
+        self, session: AsyncSession, content_item_id: uuid.UUID
+    ) -> int:
+        result = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ContentPage)
+            .where(ContentPage.content_item_id == content_item_id)
+        )
+        return result or 0
+
+    async def count_tts_ready(
+        self, session: AsyncSession, content_item_id: uuid.UUID
+    ) -> int:
+        result = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ContentPage)
+            .where(
+                ContentPage.content_item_id == content_item_id,
+                ContentPage.tts_manifest_path.is_not(None),
+            )
+        )
+        return result or 0
+
+    async def get_by_book_and_page_number(
+        self,
+        session: AsyncSession,
+        content_item_id: uuid.UUID,
+        page_number: int,
+    ) -> ContentPage | None:
+        return await session.scalar(
+            sa.select(ContentPage).where(
+                ContentPage.content_item_id == content_item_id,
+                ContentPage.page_number == page_number,
+            )
+        )
+
+    async def list_by_book(
+        self, session: AsyncSession, content_item_id: uuid.UUID
+    ) -> list[ContentPage]:
+        result = await session.execute(
+            sa.select(ContentPage)
+            .where(ContentPage.content_item_id == content_item_id)
+            .order_by(ContentPage.page_number)
+        )
+        return list(result.scalars().all())
+
+    async def list_chapters(
+        self, session: AsyncSession, content_item_id: uuid.UUID
+    ) -> list[dict]:
+        """Return [{chapter_number, chapter_name, first_page_number, page_count}] per chapter."""
+        result = await session.execute(
+            sa.select(
+                ContentPage.chapter_number,
+                ContentPage.chapter_name,
+                sa.func.min(ContentPage.page_number).label("first_page_number"),
+                sa.func.count().label("page_count"),
+            )
+            .where(ContentPage.content_item_id == content_item_id)
+            .group_by(ContentPage.chapter_number, ContentPage.chapter_name)
+            .order_by(ContentPage.chapter_number)
+        )
+        return [
+            {
+                "chapter_number": row.chapter_number or 0,
+                "chapter_name": row.chapter_name,
+                "first_page_number": row.first_page_number,
+                "page_count": row.page_count,
+            }
+            for row in result
+        ]
+
+    async def count_ready_for_user_language(
+        self, session: AsyncSession, user_id: uuid.UUID, language_id: int
+    ) -> int:
+        """Count 'ready' pages across all books for a given user+language."""
+        from src.infrastructure.db.models.content import ContentItem
+
+        result = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ContentPage)
+            .join(ContentItem, ContentItem.id == ContentPage.content_item_id)
+            .where(
+                ContentItem.user_id == user_id,
+                ContentItem.language_id == language_id,
+                ContentPage.status == "ready",
+            )
+        )
+        return result or 0
+
     async def get_pages_by_book(
         self,
         session: AsyncSession,

@@ -1,22 +1,23 @@
 """Admin endpoints for YouTube video management."""
 import uuid
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_db, require_admin
 from src.domain.youtube.chunker import YouTubeSubtitleChunker
-from src.infrastructure.db.models.content import ContentPage
 from src.infrastructure.db.models.users import User
-from src.infrastructure.db.models.youtube import YouTubeSubtitle, YouTubeVideo
 from src.infrastructure.db.repositories.audio_repo import AudioRepository
+from src.infrastructure.db.repositories.content_page_repo import ContentPageRepository
+from src.infrastructure.db.repositories.youtube_repo import YouTubeRepository
 
 router = APIRouter(prefix="/admin/youtube", tags=["admin"])
 
 _chunker = YouTubeSubtitleChunker()
 _audio_repo = AudioRepository()
+_yt_repo = YouTubeRepository()
+_page_repo = ContentPageRepository()
 
 
 class RealignResponse(BaseModel):
@@ -35,22 +36,13 @@ async def realign_youtube_video(
 
     Useful when alignments are missing or corrupted after import.
     """
-    video = await session.scalar(
-        sa.select(YouTubeVideo).where(YouTubeVideo.video_id == video_id)
-    )
+    video = await _yt_repo.find_by_video_id(session, video_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
     content_item_id: uuid.UUID = video.id
 
-    # Load subtitle lines ordered by line_number
-    subtitle_rows = await session.execute(
-        sa.select(YouTubeSubtitle)
-        .where(YouTubeSubtitle.video_id == video_id)
-        .order_by(YouTubeSubtitle.line_number)
-    )
-    subtitles = list(subtitle_rows.scalars().all())
-
+    subtitles = await _yt_repo.get_subtitles_for_video(session, video_id)
     if not subtitles:
         raise HTTPException(status_code=400, detail="No subtitles found for this video")
 
@@ -59,21 +51,12 @@ async def realign_youtube_video(
         for s in subtitles
     ]
 
-    # Load pages ordered by page_number
-    pages_result = await session.execute(
-        sa.select(ContentPage)
-        .where(ContentPage.content_item_id == content_item_id)
-        .order_by(ContentPage.page_number)
-    )
-    pages = list(pages_result.scalars().all())
-
+    pages = await _page_repo.list_by_book(session, content_item_id)
     if not pages:
         raise HTTPException(status_code=400, detail="No pages found — run import first")
 
-    # Clear existing alignments
     await _audio_repo.delete_alignments_for_book(session, content_item_id)
 
-    # Re-chunk and re-populate (same logic as import task)
     chunks = _chunker.chunk(subtitle_dicts, lines_per_page=20)
     total_alignments = 0
 

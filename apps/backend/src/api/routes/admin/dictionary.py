@@ -1,4 +1,3 @@
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import get_db, require_admin
 from src.core.config import get_settings
 from src.domain.dictionary.parser_factory import get_parser, supported_slugs
-from src.infrastructure.db.models.dictionary_entries import DictionaryEntry as DictionaryEntryModel
 from src.infrastructure.db.models.users import User
 from src.infrastructure.db.repositories.dictionary_entry_repo import DictionaryEntryRepository
 from src.infrastructure.db.repositories.dictionary_sources_repo import DictionarySourcesRepository
@@ -271,14 +269,7 @@ async def upload_dictionary(
             inserted += await custom_repo.bulk_insert(session, rows[i : i + _BATCH_SIZE])
     else:
         if replace:
-            result = await session.execute(
-                sa.delete(DictionaryEntryModel).where(
-                    DictionaryEntryModel.source_lang == src,
-                    DictionaryEntryModel.target_lang == tgt,
-                    DictionaryEntryModel.source_dict == source_slug,
-                )
-            )
-            deleted = result.rowcount
+            deleted = await _entry_repo.delete_by_triple(session, src, tgt, source_slug)
         for row in rows:
             row["source_dict"] = source_slug
         inserted = 0
