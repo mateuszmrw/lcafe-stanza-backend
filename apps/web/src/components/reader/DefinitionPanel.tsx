@@ -356,21 +356,20 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
       queryClient.invalidateQueries({ queryKey: ["vocabulary"] })
       queryClient.invalidateQueries({ queryKey: ["books"] })
 
-      queryClient.setQueriesData<PageListResponse>(
-        { queryKey: ["book-pages"] },
-        (old) => {
-          if (!old) return old
-          return {
-            ...old,
-            items: old.items.map((p) => ({
-              ...p,
-              tokens: p.tokens.map((t) =>
-                getLemmaKey(t) === lemmaKey ? { ...t, status: newStatus } : t
-              ),
-            })),
-          }
+      const patchPages = (old: PageListResponse | undefined) => {
+        if (!old) return old
+        return {
+          ...old,
+          items: old.items.map((p) => ({
+            ...p,
+            tokens: p.tokens.map((t) =>
+              getLemmaKey(t) === lemmaKey ? { ...t, status: newStatus } : t
+            ),
+          })),
         }
-      )
+      }
+      queryClient.setQueriesData<PageListResponse>({ queryKey: ["book-pages"] }, patchPages)
+      queryClient.setQueriesData<PageListResponse>({ queryKey: ["book-all-pages"] }, patchPages)
     },
   })
 
@@ -786,7 +785,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
                           return (
                             <button
                               onClick={() => {
-                                statusMutation.mutate({ status: "learning", hint: firstTranslation })
+                                statusMutation.mutate({ status: token.status === "new" ? "learning" : token.status, hint: firstTranslation })
                                 setHintSaved(true)
                                 setTimeout(() => setHintSaved(false), 2000)
                               }}

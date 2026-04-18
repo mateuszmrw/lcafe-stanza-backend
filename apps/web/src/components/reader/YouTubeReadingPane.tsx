@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { CheckCircle2 } from "lucide-react"
 import type { TokenWithStatus, PageResponse } from "@/src/lib/api/books"
 import { getBookPages } from "@/src/lib/api/books"
 import { useReaderStore } from "@/src/stores/reader"
@@ -18,6 +19,7 @@ interface YouTubeReadingPaneProps {
   bookId: string
   totalPages: number
   languageCode: string
+  onFinish?: () => void
 }
 
 interface SentenceEntry {
@@ -43,7 +45,7 @@ function buildSentences(pages: PageResponse[]): SentenceEntry[] {
   return sentences
 }
 
-export function YouTubeReadingPane({ bookId, totalPages, languageCode }: YouTubeReadingPaneProps) {
+export function YouTubeReadingPane({ bookId, totalPages, languageCode, onFinish }: YouTubeReadingPaneProps) {
   const noWordSpacing = isNoSpaceLanguage(languageCode)
   const { activeToken, setActiveToken, setPanelAnchor, setSentenceContext } = useReaderStore()
   const { activeSentenceIndex, lastPageNumber, seekTo, timeIndex } = useAudioPlayerStore()
@@ -162,6 +164,17 @@ export function YouTubeReadingPane({ bookId, totalPages, languageCode }: YouTube
             </div>
           )
         })}
+        {onFinish && (
+          <div className="mt-8 flex justify-center pb-6">
+            <button
+              onClick={onFinish}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600/20 px-4 py-2.5 text-sm font-medium text-emerald-400 transition hover:bg-emerald-600/30"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Finish
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -10,7 +10,9 @@ import {
   type TextWidth,
 } from "@/src/stores/readerSettings"
 
-interface PageOptionsMenuProps {}
+interface PageOptionsMenuProps {
+  direction?: "up" | "down"
+}
 
 function SegmentedControl<T extends string>({
   options,
@@ -41,7 +43,7 @@ function SegmentedControl<T extends string>({
   )
 }
 
-export function PageOptionsMenu({}: PageOptionsMenuProps) {
+export function PageOptionsMenu({ direction = "up" }: PageOptionsMenuProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -74,7 +76,7 @@ export function PageOptionsMenu({}: PageOptionsMenuProps) {
       </button>
 
       {open && (
-        <div className="absolute bottom-full right-0 mb-2 w-60 rounded-xl border border-zinc-700 bg-zinc-900 p-4 shadow-xl space-y-4 z-50">
+        <div className={cn("absolute right-0 w-60 rounded-xl border border-zinc-700 bg-zinc-900 p-4 shadow-xl space-y-4 z-50", direction === "up" ? "bottom-full mb-2" : "top-full mt-2")}>
           <div>
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
               Font size
@@ -132,7 +134,7 @@ export function PageOptionsMenu({}: PageOptionsMenuProps) {
                 : "text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
             )}
           >
-            Mark page as read
+            Auto-advance new words
             <BookCheck className={cn("h-3.5 w-3.5", autoMarkRead ? "text-emerald-400" : "text-zinc-500")} />
           </button>
         </div>

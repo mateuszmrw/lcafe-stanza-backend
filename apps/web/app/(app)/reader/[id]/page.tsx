@@ -26,6 +26,7 @@ import { YouTubeReadingPane } from "@/src/components/reader/YouTubeReadingPane"
 import { AudioUploadPanel } from "@/src/components/books/AudioUploadPanel"
 import { DefinitionPanel } from "@/src/components/reader/DefinitionPanel"
 import { ChapterSidebar } from "@/src/components/reader/ChapterSidebar"
+import { PageOptionsMenu } from "@/src/components/reader/PageOptionsMenu"
 import { Badge } from "@/src/components/ui/Badge"
 
 type ViewMode = "page" | "sentence" | "karaoke"
@@ -228,6 +229,36 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     return () => document.removeEventListener("keydown", handleKey)
   }, [page, book, clearActive, viewMode])
 
+  function autoAdvanceAllNewWords(languageId: number) {
+    const cached = queryClient.getQueryData<PageListResponse>(["book-all-pages", id])
+    if (!cached) return
+    const seen = new Set<string>()
+    const items = cached.items.flatMap((p) =>
+      p.tokens
+        .filter((t) => t.status === "new")
+        .filter((t) => {
+          const key = getLemmaKey(t)
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+        .map((t) => ({
+          word: getLemmaKey(t),
+          status: "well_known" as const,
+          language_id: languageId,
+          lemma: t.l,
+          pos: t.pos,
+          reading: t.r,
+          gender: t.g,
+          feats: t.f,
+        }))
+    )
+    if (items.length > 0) {
+      batchUpsertWordStatus(items).catch(() => {})
+      recordExposures(items.map((i) => i.word), languageId).catch(() => {})
+    }
+  }
+
   function autoAdvanceNewWords(languageId: number) {
     const cached = queryClient.getQueryData<PageListResponse>(["book-pages", id, page])
     if (!cached) return
@@ -373,6 +404,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
           </div>
         )}
 
+        {isYouTube && <PageOptionsMenu direction="down" />}
+
         {/* Audio panel toggle — only for completed books, not YouTube */}
         {!isYouTube && !isWebsite && book.status === "completed" && (
           <button
@@ -412,6 +445,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
               bookId={id}
               totalPages={totalPages}
               languageCode={language}
+              onFinish={() => {
+                if (autoMarkRead && book) autoAdvanceAllNewWords(book.language_id)
+                if (book) recordActivity(book.language_id).catch(() => {})
+                queryClient.invalidateQueries({ queryKey: ["books"] })
+                queryClient.invalidateQueries({ queryKey: ["book-all-pages", id] })
+                router.push("/library")
+              }}
             />
             {(activeToken || selectedText) && (
               <DefinitionPanel
