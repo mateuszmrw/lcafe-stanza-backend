@@ -25,6 +25,7 @@ def enrich_page_tokens(
     text: str,
     words_map: dict[str, dict],
     lemma_map: dict[str, str] | None = None,
+    stored_tokens: list[dict] | None = None,
 ) -> list[TokenWithStatus]:
     """Convert raw page text into enriched token list using the vocabulary words_map.
 
@@ -35,8 +36,29 @@ def enrich_page_tokens(
     surface forms are translated to lemmas before looking up status in words_map
     (which is now keyed by lemma). Falls back to surface form for pre-0042 pages
     or words not present in the map.
+
+    stored_tokens: per-occurrence token dicts from content_pages.tokens JSONB.
+    When provided, coref chain fields (cc/ch/cr/cz) and mwt_group_id are overlaid
+    onto the enriched tokens by matching on (sentence_index, surface_form_lower).
+    First-occurrence-wins when the same surface form appears multiple times in
+    a sentence — acceptable trade-off given how rarely that matters for coref.
     """
     _lemma_map = lemma_map or {}
+
+    # Build (si, w_lower) → coref + mwt lookup from stored tokens.
+    _coref: dict[tuple[int, str], dict] = {}
+    if stored_tokens:
+        for t in stored_tokens:
+            key = (t.get("si", -1), (t.get("w") or "").lower())
+            if key not in _coref:
+                _coref[key] = {
+                    "cc": t.get("cc", 0),
+                    "ch": t.get("ch", False),
+                    "cr": t.get("cr", ""),
+                    "cz": t.get("cz", False),
+                    "mwt_group_id": t.get("mwt_group_id"),
+                }
+
     tokens: list[TokenWithStatus] = []
     paragraphs = re.split(r"\n\n+", text)
     global_si = 0
@@ -63,6 +85,7 @@ def enrich_page_tokens(
                     # for pages imported before migration 0042.
                     key = _lemma_map.get(surface_lower, surface_lower)
                     word_data = words_map.get(key, {})
+                    coref = _coref.get((global_si, surface_lower), {})
                     tokens.append(TokenWithStatus(
                         id=word_data.get("id"),
                         w=surface,
@@ -78,6 +101,14 @@ def enrich_page_tokens(
                         hint=word_data.get("hint"),
                         status=word_data.get("status", "new"),
                         d=word_data.get("difficulty_score"),
+                        e=word_data.get("ent_type", ""),
+                        x=word_data.get("xpos", ""),
+                        m=word_data.get("morphemes") or [],
+                        cc=coref.get("cc", 0),
+                        ch=coref.get("ch", False),
+                        cr=coref.get("cr", ""),
+                        cz=coref.get("cz", False),
+                        mwt_group_id=coref.get("mwt_group_id"),
                     ))
             global_si += 1
 

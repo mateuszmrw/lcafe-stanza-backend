@@ -27,6 +27,9 @@ import {
   POS_LABELS,
 } from "./dictionary/DictionaryEntryCards"
 import { FormsTable } from "./dictionary/FormsTable"
+import { MorphemePopover } from "./MorphemePopover"
+import { getMorphemeRole } from "@/src/lib/morpheme-classifier"
+import { getMorphemeColorClass } from "@/src/lib/morpheme-colors"
 
 const MAX_SELECTION_CHARS = 500
 
@@ -224,6 +227,15 @@ interface DefinitionPanelProps {
   currentPage?: number
   register?: string | null
   readerConfig?: ReaderConfig
+}
+
+const NER_TYPE_LABELS: Record<string, string> = {
+  PER: "Person", LOC: "Location", ORG: "Organization", GPE: "Geo-political entity",
+  DATE: "Date expression", TIME: "Time expression", NORP: "Nationality / group",
+  CARDINAL: "Cardinal number", ORDINAL: "Ordinal number", MONEY: "Monetary value",
+  PERCENT: "Percentage", FAC: "Facility", PRODUCT: "Product", EVENT: "Named event",
+  WORK_OF_ART: "Work of art", LAW: "Legal document", LANGUAGE: "Language name",
+  QUANTITY: "Measurement", MISC: "Named entity",
 }
 
 export function DefinitionPanel({ token, language, languageId, languageCode, bookId, currentPage, register, readerConfig }: DefinitionPanelProps) {
@@ -426,7 +438,7 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
   type GrammarRow = { label: string; value: string; highlight?: string }
   const grammarRows = useMemo<GrammarRow[]>(() => {
     if (!token) return []
-    if (!(token.r || token.g || token.f || token.dep_rel)) return []
+    if (!(token.r || token.g || token.f || token.dep_rel || token.e)) return []
     const langCode = languageCode.slice(0, 2)
     const caseName = caseAbbr ? (FEAT_VALUE_LABELS[caseAbbr] ?? caseAbbr) : null
     const caseDesc = caseAbbr ? CASE_DESCRIPTIONS[caseAbbr] : null
@@ -462,6 +474,13 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
       for (const { key, value } of otherFeats) {
         rows.push({ label: key, value })
       }
+    }
+    // xpos: show only when it adds detail beyond upos (non-empty and different)
+    if (token.x && token.x !== token.pos) {
+      rows.push({ label: "Form class", value: token.x })
+    }
+    if (token.e) {
+      rows.push({ label: "Named entity", value: NER_TYPE_LABELS[token.e] ?? token.e })
     }
     return rows
   }, [token, caseAbbr, cfg, languageCode])
@@ -712,6 +731,26 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
             {/* ── Tab: Info (status + translation + sentence context) ── */}
             {wordTab === "info" && (
               <>
+                {/* Morpheme breakdown — shown only when segmentation is available */}
+                {token.m && token.m.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    {token.m.map((morpheme, i) => {
+                      const role = getMorphemeRole(morpheme, languageCode)
+                      const colorClass = getMorphemeColorClass(role)
+                      return (
+                        <MorphemePopover
+                          key={i}
+                          morpheme={morpheme}
+                          languageId={languageId}
+                          sourceLang={languageCode.slice(0, 2).toLowerCase()}
+                          role={role}
+                          colorClass={colorClass}
+                        />
+                      )
+                    })}
+                  </div>
+                )}
+
                 {/* Sentence context — plain text quote, clamped on mobile */}
                 {sentenceContext && (
                   <div className="flex items-start gap-2">

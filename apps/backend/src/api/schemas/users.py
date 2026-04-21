@@ -17,6 +17,9 @@ class UserResponse(BaseModel):
     proficiency_level: str | None = None
     native_language_code: str | None = None
     auto_ignore_proper_nouns: bool = True
+    coref_enabled: bool = False
+    exercises_enabled: bool = True
+    exercise_interval_pages: int = 5
 
     model_config = {"from_attributes": True}
 
@@ -53,3 +56,8 @@ class ProficiencyUpdateRequest(BaseModel):
     proficiency_level: str | None = None
     native_language_code: str | None = None
     auto_ignore_proper_nouns: bool | None = None
+
+
+class ExercisesSettingsRequest(BaseModel):
+    exercises_enabled: bool
+    exercise_interval_pages: int = Field(default=5, ge=1, le=100)

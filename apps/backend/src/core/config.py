@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _MIN_SECRET_LEN = 32
@@ -10,7 +10,16 @@ _MIN_SECRET_LEN = 32
 class Settings(BaseSettings):
     project_name: str = "Slovo Backend"
     debug: bool = False
+    load_stanza: bool = True  # set false on the API container; worker always keeps true
     languages: list[str] = []  # extra Stanza models to pre-load beyond the 5 defaults
+    coref_enabled_languages: list[str] = Field(default_factory=list)
+
+    @field_validator("coref_enabled_languages", mode="before")
+    @classmethod
+    def _parse_coref_langs(cls, v: object) -> list[str]:
+        if isinstance(v, str):
+            return [lang.strip() for lang in v.split(",") if lang.strip()]
+        return v or []
     use_gpu: bool = False
     model_dir: str = "stanza_resources"
     jwt_secret: str
@@ -28,6 +37,8 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 100 * 1024 * 1024              # 100 MB — generic fallback (SRT subtitles, frequency CSVs)
     max_book_upload_bytes: int = 500 * 1024 * 1024         # 500 MB — EPUB/PDF uploads
     max_dictionary_upload_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GB — Wiktionary / dictionary dumps
+    # Raise to 300+ when coref is enabled on CPU (XLM-RoBERTa inference is slow).
+    tokenize_page_timeout_seconds: int = 60
 
     # Database
     db_host: str = "localhost"

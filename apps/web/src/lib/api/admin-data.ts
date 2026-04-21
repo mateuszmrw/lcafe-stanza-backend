@@ -11,3 +11,7 @@ export async function resetAllData(confirmation: string): Promise<DataResetRespo
     body: JSON.stringify({ confirmation }),
   })
 }
+
+export async function resetActivity(): Promise<void> {
+  return apiClient("/admin/data/activity", { method: "DELETE" })
+}

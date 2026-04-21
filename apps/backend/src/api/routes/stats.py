@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_current_user, get_db, get_redis
 from src.infrastructure.db.models.users import User
-from src.infrastructure.db.repositories.content_page_repo import ContentPageRepository
+from src.infrastructure.db.repositories.activity_repo import DailyActivityRepository
 from src.infrastructure.db.repositories.content_repo import ContentRepository
 from src.infrastructure.db.repositories.language_repo import LanguageRepository
 from src.infrastructure.db.repositories.word_frequency_repo import (
@@ -21,7 +21,7 @@ _language_repo = LanguageRepository()
 _word_repo = WordRepository()
 _word_freq_repo = WordFrequencyRepository()
 _content_repo = ContentRepository()
-_page_repo = ContentPageRepository()
+_activity_repo = DailyActivityRepository()
 
 
 class KnownOverTimePoint(BaseModel):
@@ -97,7 +97,7 @@ async def get_stats(
     books_total = await _content_repo.count_books_for_user_language(
         session, current_user.id, language_id
     )
-    pages_read = await _page_repo.count_ready_for_user_language(
+    pages_read = await _activity_repo.sum_pages_read(
         session, current_user.id, language_id
     )
 

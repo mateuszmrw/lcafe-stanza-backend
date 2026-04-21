@@ -16,6 +16,7 @@ from src.infrastructure.db.models.sentences import SavedSentence
 from src.infrastructure.db.models.activity import DailyActivity
 from src.infrastructure.db.models.anki import AnkiSettings
 from src.infrastructure.db.models.youtube import YouTubeVideo, YouTubeSubtitle
+from src.infrastructure.db.models.exercises import ExerciseAttempt, ExerciseProgress
 
 __all__ = [
     "Base",
@@ -37,4 +38,6 @@ __all__ = [
     "AnkiSettings",
     "YouTubeVideo",
     "YouTubeSubtitle",
+    "ExerciseAttempt",
+    "ExerciseProgress",
 ]

@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.infrastructure.db.engine import Base
@@ -36,9 +36,7 @@ class Word(Base):
     gender: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("''")
     )
-    feats: Mapped[str] = mapped_column(
-        sa.Text, nullable=False, server_default=sa.text("''")
-    )
+    feats: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     dep_head: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, server_default=sa.text("0")
     )
@@ -70,6 +68,15 @@ class Word(Base):
     )
     source_sentence_index: Mapped[Optional[int]] = mapped_column(
         sa.Integer, nullable=True
+    )
+    ent_type: Mapped[Optional[str]] = mapped_column(sa.String(16), nullable=True)
+    skip_in_vocabulary: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    morphemes: Mapped[Optional[list[str]]] = mapped_column(JSONB, nullable=True)
+    xpos: Mapped[Optional[str]] = mapped_column(sa.String(32), nullable=True)
+    exercise_correct_rounds: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("0")
     )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")

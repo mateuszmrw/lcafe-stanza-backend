@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { BarChart2, BookOpen, Library, LogOut, Settings, ShieldCheck, User, X } from "lucide-react"
+import { BarChart2, BookOpen, GraduationCap, Library, LogOut, Settings, ShieldCheck, User, X } from "lucide-react"
 import { cn } from "@/src/lib/cn"
 import { useAuth } from "@/src/stores/auth"
 import { logout } from "@/src/lib/api/auth"
@@ -11,6 +11,7 @@ import { LanguageSwitcher } from "./LanguageSwitcher"
 const NAV_LINKS = [
   { href: "/library", label: "Library", icon: Library },
   { href: "/vocabulary", label: "Vocabulary", icon: BookOpen },
+  { href: "/grammar", label: "Grammar", icon: GraduationCap },
   { href: "/stats", label: "Statistics", icon: BarChart2 },
   { href: "/settings", label: "Settings", icon: Settings },
 ]

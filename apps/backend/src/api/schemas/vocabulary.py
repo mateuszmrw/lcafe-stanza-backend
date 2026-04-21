@@ -51,3 +51,24 @@ class VocabularyUpsertRequest(BaseModel):
 class BulkStatusUpdate(BaseModel):
     ids: list[uuid.UUID]
     status: str
+
+
+class WordFamilyItem(BaseModel):
+    id: str
+    word: str
+    pos: str
+    status: str
+    translation: Optional[str] = None
+
+
+class MorphemeFamilyResponse(BaseModel):
+    results: list[WordFamilyItem]
+
+
+class CognateResponse(BaseModel):
+    cognate_type: Optional[str]
+    l1_lemma: Optional[str] = None
+    similarity_score: Optional[float] = None
+    semantic_score: Optional[float] = None
+    l1_meaning: Optional[str] = None
+    l2_meaning: Optional[str] = None

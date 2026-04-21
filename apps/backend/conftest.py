@@ -22,8 +22,8 @@ from src.infrastructure.db.engine import Base
 get_settings.cache_clear()
 
 _TEST_DB_URL = (
-    f"postgresql+asyncpg://{os.environ['db_username']}:{os.environ['db_password']}"
-    f"@{os.environ['db_host']}:{os.environ['db_port']}/{os.environ['db_database']}"
+    f"postgresql+asyncpg://{os.environ['DB_USERNAME']}:{os.environ['DB_PASSWORD']}"
+    f"@{os.environ['DB_HOST']}:{os.environ['DB_PORT']}/{os.environ['DB_DATABASE']}"
 )
 
 # NullPool avoids asyncpg connections binding to a specific event loop
@@ -35,6 +35,8 @@ _TRUNCATE_TABLES = [
     "content_pages",
     "youtube_subtitles",
     "youtube_videos",
+    "exercise_attempts",
+    "exercise_progress",
     "words",
     "books",
     "content_items",

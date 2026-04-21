@@ -35,12 +35,13 @@ class AnkiRepository:
         user_id: uuid.UUID,
         language_id: int,
     ) -> list[Word]:
-        """Return all words with anki_pending=true for this user+language."""
+        """Return all words with anki_pending=true for this user+language. Excludes entity-flagged words."""
         result = await session.execute(
             sa.select(Word).where(
                 Word.user_id == user_id,
                 Word.language_id == language_id,
                 Word.anki_pending.is_(True),
+                Word.skip_in_vocabulary == False,  # noqa: E712
             )
         )
         return list(result.scalars().all())
@@ -51,12 +52,13 @@ class AnkiRepository:
         user_id: uuid.UUID,
         language_id: int,
     ) -> list[Word]:
-        """Return all 'learning' status words for this user+language."""
+        """Return all 'learning' status words for this user+language. Excludes entity-flagged words."""
         result = await session.execute(
             sa.select(Word).where(
                 Word.user_id == user_id,
                 Word.language_id == language_id,
                 Word.status == "learning",
+                Word.skip_in_vocabulary == False,  # noqa: E712
             )
         )
         return list(result.scalars().all())

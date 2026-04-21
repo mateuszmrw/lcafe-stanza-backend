@@ -87,3 +87,34 @@ class UserRepository:
             .where(User.id == user_id)
             .values(refresh_token_hash=token_hash)
         )
+
+    async def update_exercise_interval(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        interval_pages: int,
+    ) -> None:
+        """Update exercise_interval_pages for a user, clamping to min 1."""
+        clamped = max(1, interval_pages)
+        await session.execute(
+            sa.update(User)
+            .where(User.id == user_id)
+            .values(exercise_interval_pages=clamped)
+        )
+
+    async def update_exercise_settings(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        enabled: bool,
+        interval_pages: int,
+    ) -> None:
+        """Update exercises_enabled and exercise_interval_pages together."""
+        await session.execute(
+            sa.update(User)
+            .where(User.id == user_id)
+            .values(
+                exercises_enabled=enabled,
+                exercise_interval_pages=max(1, interval_pages),
+            )
+        )

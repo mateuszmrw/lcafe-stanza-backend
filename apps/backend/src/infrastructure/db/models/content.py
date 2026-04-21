@@ -91,6 +91,8 @@ class ContentPage(Base):
     tts_manifest_path: Mapped[Optional[str]] = mapped_column(sa.Text)
     text: Mapped[str] = mapped_column(sa.Text, nullable=False)
     lemma_map: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    tokens: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    constituency: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("'pending'")
     )

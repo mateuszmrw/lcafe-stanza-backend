@@ -16,6 +16,8 @@ const TABS = [
   { href: "/admin/deepl-instances", label: "DeepL Instances" },
   { href: "/admin/anki", label: "Anki" },
   { href: "/admin/users", label: "Users" },
+  { href: "/admin/stanza", label: "Stanza" },
+  { href: "/admin/cognates", label: "Cognates" },
   { href: "/admin/data", label: "Data" },
 ]
 

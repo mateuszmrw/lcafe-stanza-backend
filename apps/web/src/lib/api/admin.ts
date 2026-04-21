@@ -321,3 +321,44 @@ export async function setReaderConfig(
     body: JSON.stringify({ reader_config: readerConfig }),
   })
 }
+
+export interface RetokenizeResult {
+  enqueued: number
+}
+
+export async function retokenizeAll(languageId?: number): Promise<RetokenizeResult> {
+  const qs = languageId !== undefined ? `?language_id=${languageId}` : ""
+  return apiClient<RetokenizeResult>(`/admin/stanza/retokenize${qs}`, { method: "POST" })
+}
+
+export interface CognateStatusResponse {
+  row_count: number
+  last_imported_at: string | null
+  pairs: Array<{ l2: string; l1_codes: string[] }>
+}
+
+export interface CognateUploadResponse {
+  enqueued: boolean
+  filename: string
+}
+
+export async function getCognateStatus(): Promise<CognateStatusResponse> {
+  return apiClient<CognateStatusResponse>("/admin/cognates/status")
+}
+
+export async function uploadCognates(file: File): Promise<CognateUploadResponse> {
+  const form = new FormData()
+  form.append("file", file)
+  const { accessToken } = (await import("@/src/stores/auth")).getAuthStore()
+  const { env } = await import("@/src/env")
+  const res = await fetch(`${env.apiUrl}/admin/cognates/upload`, {
+    method: "POST",
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    body: form,
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error((data as { detail?: string }).detail ?? res.statusText)
+  }
+  return res.json()
+}

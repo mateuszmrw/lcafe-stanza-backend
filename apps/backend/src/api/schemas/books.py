@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TokenWithStatus(BaseModel):
@@ -20,6 +20,15 @@ class TokenWithStatus(BaseModel):
     hint: Optional[str] = None
     status: str = "new"
     d: Optional[int] = None  # difficulty score 0-100
+    e: str = ""   # entity type (PER/LOC/ORG/GPE/NORP/...), empty when not an entity
+    eb: str = ""  # entity IOB boundary (B/I), empty when not applicable
+    x: str = ""   # language-specific POS tag (xpos)
+    m: list[str] = Field(default_factory=list)  # morpheme segments (RU only)
+    cc: int = 0
+    ch: bool = False
+    cr: str = ""
+    cz: bool = False
+    mwt_group_id: int | None = None
 
 
 class BookUploadResponse(BaseModel):

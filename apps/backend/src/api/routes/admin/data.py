@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import get_db, get_redis, require_admin
 from src.core import get_settings
 from src.infrastructure.db.models.users import User
+from src.infrastructure.db.repositories.activity_repo import DailyActivityRepository
 from src.infrastructure.db.repositories.content_repo import ContentRepository
 from src.infrastructure.db.repositories.word_repo import WordRepository
 
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/admin/data", tags=["admin"])
 
 _content_repo = ContentRepository()
 _word_repo = WordRepository()
+_activity_repo = DailyActivityRepository()
 
 CONFIRMATION_PHRASE = "DELETE ALL DATA"
 
@@ -27,6 +29,19 @@ class DataResetRequest(BaseModel):
 class DataResetResponse(BaseModel):
     deleted_books: int
     deleted_words: int
+
+
+@router.delete("/activity", status_code=204)
+async def reset_activity(
+    _: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+) -> None:
+    """Wipe all daily activity rows for all users (streaks + page counts)."""
+    await _activity_repo.delete_all(session)
+    await session.commit()
+    async for key in redis.scan_iter("stats:*"):
+        await redis.delete(key)
 
 
 @router.delete("/reset", response_model=DataResetResponse)

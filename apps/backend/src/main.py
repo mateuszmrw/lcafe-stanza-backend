@@ -40,14 +40,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     books_dir = os.path.join(settings.storage_root, "books")
     os.makedirs(books_dir, exist_ok=True)
 
-    app.state.stanza = StanzaClient(
-        StanzaConfig(
-            languages=settings.languages,
-            model_dir=settings.model_dir,
-            use_gpu=settings.use_gpu,
+    if settings.load_stanza:
+        app.state.stanza = StanzaClient(
+            StanzaConfig(
+                languages=settings.languages,
+                model_dir=settings.model_dir,
+                use_gpu=settings.use_gpu,
+            )
         )
-    )
-    set_stanza_client(app.state.stanza)
+        set_stanza_client(app.state.stanza)
+    else:
+        app.state.stanza = None
 
     app.state.redis = Redis.from_url(settings.redis_url)
     app.state.arq = await create_pool(RedisSettings.from_dsn(settings.redis_url))

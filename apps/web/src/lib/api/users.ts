@@ -24,6 +24,9 @@ export interface UserProfile {
   proficiency_level: string | null
   native_language_code: string | null
   auto_ignore_proper_nouns: boolean
+  coref_enabled: boolean
+  exercises_enabled: boolean
+  exercise_interval_pages: number
 }
 
 export interface ApiKeyStatus {
@@ -75,6 +78,32 @@ export async function updateProficiency(data: {
   auto_ignore_proper_nouns?: boolean
 }): Promise<UserProfile> {
   return apiClient<UserProfile>("/users/me/proficiency", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  })
+}
+
+export interface CorefToggleResponse {
+  language_id: number
+  coref_enabled: boolean
+  retokenize_enqueued: boolean
+}
+
+export async function toggleCoref(
+  languageId: number,
+  enabled: boolean
+): Promise<CorefToggleResponse> {
+  return apiClient<CorefToggleResponse>(`/users/me/language-profiles/${languageId}/coref`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  })
+}
+
+export async function updateExerciseSettings(data: {
+  exercises_enabled: boolean
+  exercise_interval_pages: number
+}): Promise<UserProfile> {
+  return apiClient<UserProfile>("/users/me/exercises", {
     method: "PATCH",
     body: JSON.stringify(data),
   })

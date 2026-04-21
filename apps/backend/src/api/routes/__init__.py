@@ -11,6 +11,7 @@ from . import (
     auth,
     books,
     dictionary,
+    exercises,
     grammar,
     health,
     languages,
@@ -51,6 +52,9 @@ from .admin import (
     providers as admin_providers,
 )
 from .admin import (
+    cognates as admin_cognates,
+)
+from .admin import (
     stanza as admin_stanza,
 )
 from .admin import (
@@ -72,6 +76,7 @@ all_routers: list[APIRouter] = [
     auth.router,
     users.router,
     books.router,
+    exercises.router,
     languages.router,
     vocabulary.router,
     dictionary.router,
@@ -97,6 +102,7 @@ all_routers: list[APIRouter] = [
     admin_anki.router,
     admin_youtube.router,
     admin_stanza.router,
+    admin_cognates.router,
     setup.router,
 ]
 

@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import get_current_user, get_db
+from src.api.dependencies import get_arq_pool, get_current_user, get_db
 from src.api.schemas.admin import ProviderResponse
-from src.api.schemas.users import ActiveLanguageRequest, ApiKeyResponse, ApiKeyUpsertRequest, ProficiencyUpdateRequest, UserResponse, UserUpdateRequest, VALID_PROFICIENCY_LEVELS
+from src.api.schemas.users import ActiveLanguageRequest, ApiKeyResponse, ApiKeyUpsertRequest, ExercisesSettingsRequest, ProficiencyUpdateRequest, UserResponse, UserUpdateRequest, VALID_PROFICIENCY_LEVELS
 from src.core.config import get_settings
 from src.domain.users.models import UserUpdate
 from src.domain.users.service import UserService
@@ -16,6 +16,7 @@ from src.infrastructure.db.repositories.api_key_repo import ApiKeyRepository
 from src.infrastructure.db.repositories.content_repo import ContentRepository
 from src.infrastructure.db.repositories.provider_repo import ProviderRepository
 from src.infrastructure.db.repositories.user_language_profile_repo import UserLanguageProfileRepository
+from src.infrastructure.db.repositories.user_repo import UserRepository
 from src.infrastructure.db.repositories.word_repo import WordRepository
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -23,6 +24,7 @@ _user_service = UserService()
 _provider_repo = ProviderRepository()
 _api_key_repo = ApiKeyRepository()
 _lang_profile_repo = UserLanguageProfileRepository()
+_user_repo = UserRepository()
 _content_repo = ContentRepository()
 _word_repo = WordRepository()
 
@@ -59,6 +61,9 @@ async def _build_user_response(user: User, session: AsyncSession) -> UserRespons
             if profile and profile.auto_ignore_proper_nouns is not None
             else user.auto_ignore_proper_nouns
         ),
+        coref_enabled=profile.coref_enabled if profile else False,
+        exercises_enabled=user.exercises_enabled,
+        exercise_interval_pages=user.exercise_interval_pages,
     )
 
 
@@ -129,6 +134,23 @@ async def set_proficiency(
 
     await _lang_profile_repo.upsert(session, current_user.id, current_user.active_language_id, **fields)
     await session.commit()
+    return await _build_user_response(current_user, session)
+
+
+@router.patch("/me/exercises", response_model=UserResponse)
+async def update_exercise_settings(
+    body: ExercisesSettingsRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    await _user_repo.update_exercise_settings(
+        session,
+        current_user.id,
+        enabled=body.exercises_enabled,
+        interval_pages=body.exercise_interval_pages,
+    )
+    await session.commit()
+    await session.refresh(current_user)
     return await _build_user_response(current_user, session)
 
 
@@ -228,3 +250,65 @@ async def delete_api_key(
 
     await _api_key_repo.delete(session, current_user.id, provider.id)
     await session.commit()
+
+
+class CorefToggleRequest(BaseModel):
+    enabled: bool
+
+
+class CorefToggleResponse(BaseModel):
+    language_id: int
+    coref_enabled: bool
+    retokenize_enqueued: bool
+
+
+@router.patch("/me/language-profiles/{language_id}/coref", response_model=CorefToggleResponse)
+async def toggle_coref(
+    language_id: int,
+    body: CorefToggleRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+    arq=Depends(get_arq_pool),
+) -> CorefToggleResponse:
+    """Toggle coreference resolution for a specific language.
+
+    Enabling triggers a background fan-out that retokenizes all content items
+    for this user+language so coref chain data is populated. Disabling is
+    instant — the enricher will strip coref fields for opted-out users.
+
+    Admin must list the language in COREF_ENABLED_LANGUAGES for coref to
+    actually run. If not listed, the toggle still flips the DB flag but no
+    coref data will be generated.
+    """
+    language = await session.get(Language, language_id)
+    if not language or not language.is_active:
+        raise HTTPException(status_code=404, detail="Language not found or inactive")
+
+    profile = await _lang_profile_repo.find_by_user_and_language(
+        session, current_user.id, language_id
+    )
+    was_enabled = profile.coref_enabled if profile else False
+
+    await _lang_profile_repo.upsert(
+        session, current_user.id, language_id, coref_enabled=body.enabled
+    )
+    await session.commit()
+
+    # Fan-out retokenize only when enabling (FALSE → TRUE).
+    # Disabling is handled at read time by the page enricher stripping coref fields.
+    retokenize_enqueued = False
+    if body.enabled and not was_enabled:
+        settings = get_settings()
+        if language.name.lower() in settings.coref_enabled_languages:
+            await arq.enqueue_job(
+                "retokenize_user_language_coref",
+                str(current_user.id),
+                language_id,
+            )
+            retokenize_enqueued = True
+
+    return CorefToggleResponse(
+        language_id=language_id,
+        coref_enabled=body.enabled,
+        retokenize_enqueued=retokenize_enqueued,
+    )

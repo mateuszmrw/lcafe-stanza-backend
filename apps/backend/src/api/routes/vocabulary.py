@@ -4,6 +4,7 @@ import io
 import logging
 import os
 import uuid
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,7 +14,8 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_current_user, get_db, get_redis
-from src.api.schemas.vocabulary import BulkStatusUpdate, VocabularyStatusUpdate, VocabularyUpsertRequest, WordListResponse, WordResponse
+from src.api.schemas.vocabulary import BulkStatusUpdate, CognateResponse, MorphemeFamilyResponse, VocabularyStatusUpdate, VocabularyUpsertRequest, WordFamilyItem, WordListResponse, WordResponse
+from src.infrastructure.db.repositories.cognate_repo import CognateRepository
 from src.core.config import get_settings
 from src.domain.coverage.service import invalidate_coverage_cache
 from src.domain.difficulty.service import DifficultyService
@@ -26,7 +28,7 @@ from src.infrastructure.db.repositories.anki_repo import AnkiRepository
 from src.infrastructure.db.repositories.audio_repo import AudioRepository
 from src.infrastructure.db.repositories.dictionary_entry_repo import DictionaryEntryRepository
 from src.infrastructure.db.repositories.word_frequency_repo import WordFrequencyRepository
-from src.infrastructure.db.repositories.word_repo import WordRepository
+from src.infrastructure.db.repositories.word_repo import WordRepository, _feats_to_str
 from src.infrastructure.ffmpeg.clipper import clip_audio, is_available as ffmpeg_available
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/vocabulary", tags=["vocabulary"])
 _word_repo = WordRepository()
 _anki_repo = AnkiRepository()
+_cognate_repo = CognateRepository()
 _dict_repo = DictionaryEntryRepository()
 _freq_repo = WordFrequencyRepository()
 _audio_repo = AudioRepository()
@@ -255,6 +258,87 @@ async def anki_status(
     return AnkiSyncResponse(synced=0, queued=0, pending_total=pending_total)
 
 
+@router.get("/cognates/batch")
+async def get_cognates_batch(
+    lemmas: str,
+    l2: str,
+    l1: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, dict]:
+    resolved_l1 = l1 or current_user.native_language_code
+    if not resolved_l1 or resolved_l1 == l2:
+        return {}
+    supported = await _cognate_repo.is_pair_supported(session, l2_language=l2, l1_language=resolved_l1)
+    if not supported:
+        return {}
+    unique_lemmas = list({lm.strip() for lm in lemmas.split(",") if lm.strip()})[:300]
+    return await _cognate_repo.batch_get_cognates(session, unique_lemmas, l2, resolved_l1)
+
+
+@router.get("/morpheme-family", response_model=MorphemeFamilyResponse)
+async def get_morpheme_family(
+    morpheme: str,
+    language_id: int,
+    lang_code: str = "",
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> MorphemeFamilyResponse:
+    """Return up to 20 vocabulary words sharing the given morpheme."""
+    morpheme = morpheme.strip()
+    if not morpheme or len(morpheme) > 30:
+        raise HTTPException(status_code=422, detail="morpheme must be 1–30 characters")
+    rows = await _word_repo.get_morpheme_family(
+        session,
+        user_id=current_user.id,
+        language_id=language_id,
+        morpheme=morpheme,
+    )
+    translations: dict[str, str] = {}
+    if lang_code and rows:
+        words = [r["word"] for r in rows]
+        translations = await _dict_repo.batch_lookup(session, words, lang_code, "en")
+    items = [
+        WordFamilyItem(**r, translation=translations.get(r["word"]) or None)
+        for r in rows
+    ]
+    return MorphemeFamilyResponse(results=items)
+
+
+@router.get("/cognate", response_model=CognateResponse)
+async def get_cognate(
+    lemma: str,
+    l2: str,
+    l1: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CognateResponse:
+    null_response = CognateResponse(cognate_type=None)
+    if len(lemma) > 100:
+        raise HTTPException(status_code=422, detail="lemma must be ≤100 characters")
+
+    l1 = l1 or current_user.native_language_code
+    if not l1 or l1 == l2:
+        return null_response
+
+    supported = await _cognate_repo.is_pair_supported(session, l2_language=l2, l1_language=l1)
+    if not supported:
+        return null_response
+
+    pair = await _cognate_repo.get_cognate(session, l2_lemma=lemma, l2_language=l2, l1_language=l1)
+    if not pair:
+        return null_response
+
+    return CognateResponse(
+        cognate_type=pair.cognate_type,
+        l1_lemma=pair.l1_lemma,
+        similarity_score=pair.similarity_score,
+        semantic_score=pair.semantic_score,
+        l1_meaning=pair.l1_meaning,
+        l2_meaning=pair.l2_meaning,
+    )
+
+
 @router.get("/{word_id}", response_model=WordResponse)
 async def get_word(
     word_id: uuid.UUID,
@@ -361,7 +445,7 @@ async def sync_to_anki(
                     "POS": w.pos or "",
                     "Gender": w.gender or "",
                     "Reading": w.reading or "",
-                    "Morphology": w.feats or "",
+                    "Morphology": _feats_to_str(w.feats),
                     "Definition": definitions.get(w.word, ""),
                     "Hint": w.hint or "",
                     "SentenceContext": sentence_ctx,
@@ -396,5 +480,3 @@ async def sync_to_anki(
         await session.commit()
         pending_total = await _anki_repo.get_pending_count(session, current_user.id, body.language_id)
         return AnkiSyncResponse(synced=0, queued=len(all_words), pending_total=pending_total)
-
-

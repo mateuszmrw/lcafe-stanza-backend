@@ -34,6 +34,12 @@ class User(Base):
         sa.Integer, nullable=False, server_default=sa.text("0")
     )
     refresh_token_hash: Mapped[Optional[str]] = mapped_column(sa.Text)
+    exercise_interval_pages: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("5")
+    )
+    exercises_enabled: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("true")
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
     )
@@ -59,5 +65,8 @@ class UserLanguageProfile(Base):
     proficiency_level: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     native_language_code: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     auto_ignore_proper_nouns: Mapped[Optional[bool]] = mapped_column(sa.Boolean, nullable=True)
+    coref_enabled: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
 
     __table_args__ = (sa.UniqueConstraint("user_id", "language_id"),)

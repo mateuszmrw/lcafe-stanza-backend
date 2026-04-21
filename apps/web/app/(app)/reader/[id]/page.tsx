@@ -9,6 +9,8 @@ import { getBook, getBookPages, type PageListResponse } from "@/src/lib/api/book
 import { getAlignmentsForPage, getTimeIndex } from "@/src/lib/api/audio"
 import { getReadingProgress, saveReadingProgress, getAudioProgress, saveAudioProgress } from "@/src/lib/reading-progress"
 import { batchUpsertWordStatus, recordExposures } from "@/src/lib/api/vocabulary"
+import { checkExercises, snoozeExercises } from "@/src/lib/api/exercises"
+import { ExercisePrompt } from "@/src/components/reader/ExercisePrompt"
 import { getLemmaKey } from "@/src/lib/tokens"
 import { useReaderStore } from "@/src/stores/reader"
 import { useAudioPlayerStore } from "@/src/stores/audioPlayer"
@@ -43,6 +45,11 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const [viewMode, setViewMode] = useState<ViewMode>("page")
   const [sentenceIndex, setSentenceIndex] = useState(sentenceParam)
   const [showAudioPanel, setShowAudioPanel] = useState(false)
+  const [exercisePrompt, setExercisePrompt] = useState<{
+    candidateCount: number
+    targetPage: number | null
+    endOfContent: boolean
+  } | null>(null)
   const { setAlignments, seekTo, setTimeIndex, setOnPageChange, clearTimeIndex, reset: resetAudio } = useAudioPlayerStore()
   const { autoMarkRead } = useReaderSettings()
 
@@ -289,14 +296,30 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     }
   }
 
-  function setPage(p: number) {
-    if (autoMarkRead && book) autoAdvanceNewWords(book.language_id)
-    if (book) recordActivity(book.language_id).catch(() => {})
-    saveReadingProgress(id, p)
+  function doNavigatePage(p: number) {
     const params = new URLSearchParams(searchParams)
     params.set("page", String(p))
     params.delete("sentence")
     router.replace(`/reader/${id}?${params}`)
+  }
+
+  function setPage(p: number) {
+    if (autoMarkRead && book) autoAdvanceNewWords(book.language_id)
+    if (book) recordActivity(book.language_id).catch(() => {})
+    saveReadingProgress(id, p)
+    if (p <= page) {
+      doNavigatePage(p)
+      return
+    }
+    checkExercises(id, page)
+      .then((check) => {
+        if (check.should_show) {
+          setExercisePrompt({ candidateCount: check.candidate_count, targetPage: p, endOfContent: false })
+        } else {
+          doNavigatePage(p)
+        }
+      })
+      .catch(() => doNavigatePage(p))
   }
 
   function advanceSentence() {
@@ -450,7 +473,15 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
                 if (book) recordActivity(book.language_id).catch(() => {})
                 queryClient.invalidateQueries({ queryKey: ["books"] })
                 queryClient.invalidateQueries({ queryKey: ["book-all-pages", id] })
-                router.push("/library")
+                checkExercises(id, page)
+                  .then((check) => {
+                    if (check.should_show) {
+                      setExercisePrompt({ candidateCount: check.candidate_count, targetPage: null, endOfContent: true })
+                    } else {
+                      router.push("/library")
+                    }
+                  })
+                  .catch(() => router.push("/library"))
               }}
             />
             {(activeToken || selectedText) && (
@@ -486,7 +517,15 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
                   if (autoMarkRead && book) autoAdvanceNewWords(book.language_id)
                   if (book) recordActivity(book.language_id).catch(() => {})
                   queryClient.invalidateQueries({ queryKey: ["books"] })
-                  router.push("/library")
+                  checkExercises(id, page)
+                    .then((check) => {
+                      if (check.should_show) {
+                        setExercisePrompt({ candidateCount: check.candidate_count, targetPage: null, endOfContent: true })
+                      } else {
+                        router.push("/library")
+                      }
+                    })
+                    .catch(() => router.push("/library"))
                 }}
               />
             ) : viewMode === "karaoke" ? (
@@ -546,6 +585,31 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
       )}
       {!hasAudio && !isYouTube && hasTts && (
         <DashAudioPlayer bookId={id} pageNumber={page} onPageEnd={handleAudioPageEnd} />
+      )}
+
+      {exercisePrompt && (
+        <ExercisePrompt
+          candidateCount={exercisePrompt.candidateCount}
+          endOfContent={exercisePrompt.endOfContent}
+          onLetGo={() => {
+            const { targetPage, endOfContent } = exercisePrompt
+            setExercisePrompt(null)
+            const params = new URLSearchParams({ mode: "inline" })
+            if (targetPage) params.set("returnPage", String(targetPage))
+            if (endOfContent) params.set("endOfContent", "true")
+            router.push(`/reader/${id}/exercises?${params}`)
+          }}
+          onSkip={() => {
+            const { targetPage, endOfContent } = exercisePrompt
+            setExercisePrompt(null)
+            snoozeExercises(id, page).catch(() => {})
+            if (endOfContent) {
+              router.push("/library")
+            } else if (targetPage) {
+              doNavigatePage(targetPage)
+            }
+          }}
+        />
       )}
     </div>
   )

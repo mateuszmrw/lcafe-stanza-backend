@@ -25,7 +25,10 @@ dependencies = [
     "yt-dlp>=2024.12.13",
     "pypdf>=5.0.0",
     "pypinyin>=0.53.0",
-    "stanza==1.10.1",
+    "stanza==1.11.1",
+    "morphseg>=0.2.0",
+    "transformers>=4.40.0",
+    "peft>=0.10.0",
     "uvicorn>=0.34.0",
 ]
 

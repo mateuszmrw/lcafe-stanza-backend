@@ -139,6 +139,53 @@ class ContentPageRepository:
         )
         return result or 0
 
+    async def find_sentence_for_lemma(
+        self,
+        session: AsyncSession,
+        lemma: str,
+        content_item_id: uuid.UUID,
+    ) -> dict | None:
+        """Return one sentence containing a token with the given lemma.
+
+        Prefers the most recent page. Returns
+        {"tokens": [...], "page_number": int, "target_index": int} or None.
+        """
+        result = await session.execute(
+            sa.text(
+                """
+                SELECT p.page_number,
+                       p.tokens,
+                       (elem.value->>'si')::int AS sentence_idx,
+                       (elem.ordinality - 1)::int AS token_idx
+                FROM content_pages p
+                CROSS JOIN LATERAL
+                    jsonb_array_elements(p.tokens) WITH ORDINALITY AS elem(value, ordinality)
+                WHERE p.content_item_id = :content_item_id
+                  AND p.tokens IS NOT NULL
+                  AND elem.value->>'l' = :lemma
+                ORDER BY p.page_number DESC
+                LIMIT 1
+                """
+            ),
+            {"content_item_id": content_item_id, "lemma": lemma},
+        )
+        row = result.first()
+        if row is None:
+            return None
+
+        all_tokens: list[dict] = row.tokens
+        sentence_idx: int = row.sentence_idx
+        sentence_tokens = [t for t in all_tokens if t.get("si") == sentence_idx]
+        target_index = next(
+            (i for i, t in enumerate(sentence_tokens) if t.get("l") == lemma),
+            0,
+        )
+        return {
+            "tokens": sentence_tokens,
+            "page_number": row.page_number,
+            "target_index": target_index,
+        }
+
     async def get_pages_by_book(
         self,
         session: AsyncSession,

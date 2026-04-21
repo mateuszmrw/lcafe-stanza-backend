@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Trash2, AlertTriangle } from "lucide-react"
-import { resetAllData } from "@/src/lib/api/admin-data"
+import { resetAllData, resetActivity } from "@/src/lib/api/admin-data"
 
 const REQUIRED_PHRASE = "DELETE ALL DATA"
 
@@ -21,6 +21,18 @@ export default function DataPage() {
     },
   })
 
+  const {
+    mutate: mutateActivity,
+    isPending: isActivityPending,
+    isSuccess: isActivitySuccess,
+  } = useMutation({
+    mutationFn: resetActivity,
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ["stats"] })
+      queryClient.removeQueries({ queryKey: ["activity"] })
+    },
+  })
+
   const confirmed = input === REQUIRED_PHRASE
 
   return (
@@ -30,6 +42,32 @@ export default function DataPage() {
         <p className="mt-1 text-sm text-zinc-400">
           Permanently delete all content from the application.
         </p>
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 space-y-4">
+        <div className="flex items-start gap-3">
+          <Trash2 className="mt-0.5 h-5 w-5 shrink-0 text-zinc-400" />
+          <div>
+            <h3 className="font-medium text-zinc-100">Reset activity data</h3>
+            <p className="mt-1 text-sm text-zinc-400">
+              Wipe all reading streaks and page-read counts for all users. Useful after fixing
+              counting bugs. Cannot be undone.
+            </p>
+          </div>
+        </div>
+        {isActivitySuccess && (
+          <div className="rounded-md border border-green-800/50 bg-green-950/30 px-4 py-3 text-sm text-green-300">
+            Activity data cleared.
+          </div>
+        )}
+        <button
+          onClick={() => mutateActivity()}
+          disabled={isActivityPending}
+          className="flex items-center gap-2 rounded-md bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-100 transition hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Trash2 className="h-4 w-4" />
+          {isActivityPending ? "Clearing…" : "Clear activity data"}
+        </button>
       </div>
 
       <div className="rounded-lg border border-red-900/50 bg-red-950/20 p-6 space-y-4">

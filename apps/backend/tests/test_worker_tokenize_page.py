@@ -12,6 +12,7 @@ from src.infrastructure.db.models.languages import Language, LanguageNlpConfig
 from src.infrastructure.db.models.providers import Provider
 from src.infrastructure.db.models.words import Word
 from src.infrastructure.db.repositories.user_repo import UserRepository
+from src.infrastructure.stanza.client import TokenizeResult
 from src.worker.tasks.tokenize_page import tokenize_page
 
 
@@ -81,10 +82,13 @@ class TestTokenizePage:
         user, content_item, page, _ = setup
 
         mock_stanza = MagicMock()
-        mock_stanza.tokenize_sync.return_value = [
-            {"w": "Hello", "l": "hello", "pos": "INTJ", "r": "", "si": 0, "g": ""},
-            {"w": "world", "l": "world", "pos": "NOUN", "r": "", "si": 0, "g": ""},
-        ]
+        mock_stanza.tokenize_sync.return_value = TokenizeResult(
+            tokens=[
+                {"w": "Hello", "l": "hello", "pos": "INTJ", "r": "", "si": 0, "g": ""},
+                {"w": "world", "l": "world", "pos": "NOUN", "r": "", "si": 0, "g": ""},
+            ],
+            constituency=[None],
+        )
         redis = AsyncMock()
         redis.incr = AsyncMock(return_value=1)
         redis.incrby = AsyncMock(return_value=2)
@@ -112,11 +116,14 @@ class TestTokenizePage:
         user, content_item, page, language = setup
 
         mock_stanza = MagicMock()
-        mock_stanza.tokenize_sync.return_value = [
-            {"w": "Python", "l": "python", "pos": "NOUN", "r": "", "si": 0, "g": "Neut"},
-            {"w": "python", "l": "python", "pos": "NOUN", "r": "", "si": 0, "g": "Neut"},  # duplicate
-            {"w": "Code", "l": "code", "pos": "NOUN", "r": "", "si": 0, "g": ""},
-        ]
+        mock_stanza.tokenize_sync.return_value = TokenizeResult(
+            tokens=[
+                {"w": "Python", "l": "python", "pos": "NOUN", "r": "", "si": 0, "g": "Neut"},
+                {"w": "python", "l": "python", "pos": "NOUN", "r": "", "si": 0, "g": "Neut"},
+                {"w": "Code", "l": "code", "pos": "NOUN", "r": "", "si": 0, "g": ""},
+            ],
+            constituency=[None],
+        )
         redis = AsyncMock()
         redis.incr = AsyncMock(return_value=1)
         redis.incrby = AsyncMock(return_value=3)
@@ -150,9 +157,10 @@ class TestTokenizePage:
         user, content_item, page, _ = setup
 
         mock_stanza = MagicMock()
-        mock_stanza.tokenize_sync.return_value = [
-            {"w": "Hello", "l": "hello", "pos": "INTJ", "r": "", "si": 0, "g": ""},
-        ]
+        mock_stanza.tokenize_sync.return_value = TokenizeResult(
+            tokens=[{"w": "Hello", "l": "hello", "pos": "INTJ", "r": "", "si": 0, "g": ""}],
+            constituency=[None],
+        )
         redis = AsyncMock()
         redis.incr = AsyncMock(return_value=1)
         redis.incrby = AsyncMock(return_value=1)

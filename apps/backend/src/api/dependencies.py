@@ -26,8 +26,14 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_stanza_client_dependency(request: Request) -> StanzaClient:
-    """Return the app's StanzaClient — created once in lifespan."""
-    return request.app.state.stanza
+    """Return the app's StanzaClient — created once in lifespan.
+
+    Raises 503 when LOAD_STANZA=false (API-only container without NLP).
+    """
+    client = request.app.state.stanza
+    if client is None:
+        raise HTTPException(status_code=503, detail="NLP not available on this instance")
+    return client
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

@@ -46,6 +46,7 @@ export interface TokenWithStatus {
   w: string
   l: string
   pos: string
+  x?: string  // language-specific POS tag (xpos), e.g. "Vmpsnsms" for Russian
   r: string
   pi: number  // paragraph index within the page
   si: number  // sentence index within the page (global)
@@ -56,6 +57,14 @@ export interface TokenWithStatus {
   hint?: string | null
   status: "new" | "learning" | "known" | "ignored" | "well_known"
   d?: number | null  // difficulty score 0-100
+  e?: string        // named entity type: PER, LOC, ORG, MISC
+  eb?: string       // entity IOB tag: B (begin) or I (inside)
+  m?: string[]      // morpheme segmentation, e.g. ["за", "пис", "а", "ть"]
+  cc?: number       // coreference chain id (0 = none)
+  ch?: boolean      // true if this token is the chain head
+  cr?: string       // representative mention text for this chain
+  cz?: boolean      // true if this is a zero pronoun (pro-drop)
+  mwt_group_id?: number | null  // multi-word token group id (null if not MWT)
 }
 
 export interface PageResponse {
@@ -67,6 +76,18 @@ export interface PageResponse {
   status: "pending" | "ready"
   text: string
   tokens: TokenWithStatus[]
+}
+
+export interface ConstituencyPhrase {
+  si: number    // sentence index
+  start: number // inclusive word index within sentence
+  end: number   // exclusive word index within sentence
+  type: string  // NP, VP, PP, ADJP, ADVP, SBAR
+  text: string
+}
+
+export async function getPagePhrases(bookId: string, pageId: string): Promise<ConstituencyPhrase[]> {
+  return apiClient<ConstituencyPhrase[]>(`/books/${bookId}/pages/${pageId}/phrases`)
 }
 
 export interface PageListResponse {

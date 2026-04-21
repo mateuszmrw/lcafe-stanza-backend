@@ -89,18 +89,28 @@ class CoverageService:
                       AND cp.lemma_map IS NOT NULL
                 )
                 SELECT
-                    (SELECT COUNT(*) FROM book_lemmas) AS total,
+                    (SELECT COUNT(*) FROM book_lemmas bl
+                     WHERE NOT EXISTS (
+                         SELECT 1 FROM words w
+                         WHERE w.word = bl.lemma
+                           AND w.user_id = :user_id
+                           AND w.language_id = :language_id
+                           AND w.skip_in_vocabulary = TRUE
+                     )
+                    ) AS total,
                     (SELECT COUNT(*) FROM book_lemmas bl
                      JOIN words w ON w.word = bl.lemma
                        AND w.user_id = :user_id
                        AND w.language_id = :language_id
                        AND w.status IN ('known', 'well_known', 'learning')
+                       AND w.skip_in_vocabulary = FALSE
                     ) AS known,
                     (SELECT COUNT(*) FROM book_lemmas bl
                      JOIN words w ON w.word = bl.lemma
                        AND w.user_id = :user_id
                        AND w.language_id = :language_id
                        AND w.status = 'well_known'
+                       AND w.skip_in_vocabulary = FALSE
                     ) AS mastered
             """),
             {

@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { MoreVertical, RefreshCw, Trash2 } from "lucide-react"
+import { ArrowRight, MoreVertical, RefreshCw, Trash2 } from "lucide-react"
 import { bookCoverUrl, type BookListItem } from "@/src/lib/api/books"
 import { Badge } from "@/src/components/ui/Badge"
 import { Spinner } from "@/src/components/ui/Spinner"
@@ -14,7 +14,6 @@ const STATUS_BADGE: Record<
 > = {
   pending: { variant: "zinc", label: "Pending" },
   processing: { variant: "blue", label: "Processing" },
-  completed: { variant: "green", label: "Completed" },
   failed: { variant: "red", label: "Failed" },
 }
 
@@ -126,9 +125,18 @@ export function BookCard({ book, onDelete, onRealignAudio, realigningId }: BookC
 
       <div className="mt-auto flex items-center justify-between pt-2">
         <div className="flex items-center gap-2">
-          <Badge variant={badge.variant}>{badge.label}</Badge>
-          {book.status === "processing" && (
-            <Spinner className="h-3 w-3 text-blue-400" />
+          {book.status === "completed" ? (
+            <span className="flex items-center gap-1 text-xs text-zinc-500">
+              <ArrowRight className="h-3.5 w-3.5" />
+              Read
+            </span>
+          ) : (
+            <>
+              <Badge variant={badge.variant}>{badge.label}</Badge>
+              {book.status === "processing" && (
+                <Spinner className="h-3 w-3 text-blue-400" />
+              )}
+            </>
           )}
         </div>
         {book.word_count != null && (

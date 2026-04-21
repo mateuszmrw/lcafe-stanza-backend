@@ -5,19 +5,22 @@ import uuid
 import sqlalchemy as sa
 from redis.asyncio import Redis
 
+from src.core.config import get_settings
 from src.infrastructure.db.engine import AsyncSessionFactory
 from src.infrastructure.db.models.content import Book, ContentItem, ContentPage
 from src.infrastructure.db.models.languages import LanguageNlpConfig
 from src.infrastructure.db.models.providers import Provider
 from src.infrastructure.db.models.users import User, UserLanguageProfile
 from src.infrastructure.db.repositories.word_repo import WordRepository
-from src.infrastructure.stanza.client import StanzaClient
+from src.infrastructure.stanza.client import StanzaClient, TokenizeResult
+from src.infrastructure.db.repositories.word_repo import _normalize_feats
 from src.domain.content.import_service import (
     COMPLETED_PAGES_KEY as _COMPLETED_KEY,
     FINALIZING_KEY as _FINALIZING_KEY,
     TOKEN_COUNT_KEY as _TOKEN_COUNT_KEY,
     TOTAL_PAGES_KEY as _TOTAL_KEY,
 )
+from src.domain.content.vocabulary_filter import is_trash
 from src.worker.events import publish_import_event
 
 logger = logging.getLogger(__name__)
@@ -45,14 +48,17 @@ async def tokenize_page(ctx: dict, page_id: str) -> None:
                 session, content_item.user_id, content_item.language_id
             )
 
-            # Stanza can hang on pathological input (unusual UTF-8 sequences,
-            # extremely long paragraphs). A 60s timeout is well above the p99
-            # for normal pages (~3000 chars ≈ 1-2s) but unblocks the worker
-            # thread if a page is stuck.
-            token_dicts: list[dict] = await asyncio.wait_for(
+            # Coref (XLM-RoBERTa large) on CPU takes 60-120s per page.
+            # TOKENIZE_PAGE_TIMEOUT_SECONDS defaults to 300s; reduce to 60 on
+            # GPU/MPS where inference is fast.
+            timeout = float(get_settings().tokenize_page_timeout_seconds)
+            result: TokenizeResult = await asyncio.wait_for(
                 asyncio.to_thread(stanza_client.tokenize_sync, stanza_lang, page.text),
-                timeout=60.0,
+                timeout=timeout,
             )
+            token_dicts = result.tokens
+            page.tokens = result.tokens
+            page.constituency = result.constituency
 
             # Build surface → lemma map for read-time enrichment (migration 0042).
             page.lemma_map = {
@@ -172,6 +178,8 @@ def _build_word_rows(
     "well_known" so they still count toward coverage stats but don't show
     up as new words to learn.
     """
+    _ENTITY_TYPES = {"PER", "LOC", "ORG", "GPE", "NORP"}
+
     seen: set[str] = set()
     rows: list[dict] = []
     for t in token_dicts:
@@ -181,6 +189,11 @@ def _build_word_rows(
             continue
         seen.add(lemma)
         pos = t.get("pos") or ""
+        if is_trash(lemma, pos)[0]:
+            continue
+        ent_type = t.get("e", "") or ""
+        xpos = t.get("x", "") or ""
+        morphemes = t.get("lm") or t.get("m") or []
         # Single-character lemmas are almost always function words in Slavic
         # languages ("a", "i", "o", "u", "w", "z" in Polish) — not useful as
         # tracked vocabulary.
@@ -197,12 +210,18 @@ def _build_word_rows(
             "pos": pos,
             "reading": t.get("r", ""),
             "gender": t.get("g", ""),
-            "feats": t.get("feats", ""),
+            "feats": _normalize_feats(t.get("feats", "")),
             "dep_head": t.get("dep_head", 0),
             "dep_rel": t.get("dep_rel", ""),
             "status": "well_known" if is_auto_known else "new",
             "source_page_id": source_page_id,
             "source_sentence_index": t.get("si"),
+            "ent_type": ent_type if ent_type else None,
+            "xpos": xpos if xpos else None,
+            "morphemes": morphemes if morphemes else None,
+            # Only set skip_in_vocabulary on INSERT (handled by bulk_upsert's
+            # ON CONFLICT clause which does NOT update this column).
+            "skip_in_vocabulary": ent_type in _ENTITY_TYPES,
         })
     return rows
 

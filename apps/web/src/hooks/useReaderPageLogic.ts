@@ -2,7 +2,7 @@
 
 import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { getBookPages, type TokenWithStatus } from "@/src/lib/api/books"
+import { getBookPages, getPagePhrases, type ConstituencyPhrase, type TokenWithStatus } from "@/src/lib/api/books"
 import { listPhrases } from "@/src/lib/api/phrases"
 
 interface Args {
@@ -53,6 +53,13 @@ export function useReaderPageLogic({ bookId, page, languageId, noWordSpacing }: 
 
   const currentPage = data?.items[0]
 
+  const { data: constituentPhrases = [] } = useQuery<ConstituencyPhrase[]>({
+    queryKey: ["page-phrases", bookId, currentPage?.id],
+    queryFn: () => getPagePhrases(bookId, currentPage!.id),
+    enabled: !!currentPage?.id && currentPage.status === "ready",
+    staleTime: Infinity,
+  })
+
   const phraseTokenIndices = useMemo(() => {
     if (!currentPage || !phrasesData) return new Set<number>()
     const pagePhrase = phrasesData.items.filter(
@@ -61,5 +68,5 @@ export function useReaderPageLogic({ bookId, page, languageId, noWordSpacing }: 
     return buildPhraseTokenSet(currentPage.tokens, pagePhrase, noWordSpacing)
   }, [currentPage, phrasesData, bookId, page, noWordSpacing])
 
-  return { currentPage, isLoading, phraseTokenIndices }
+  return { currentPage, isLoading, phraseTokenIndices, constituentPhrases }
 }

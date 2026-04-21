@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Loader2, Check } from "lucide-react"
-import { getProfile, updateProfile, updateProficiency } from "@/src/lib/api/users"
+import { getProfile, updateProfile, updateProficiency, toggleCoref, updateExerciseSettings } from "@/src/lib/api/users"
 import { useAuth } from "@/src/stores/auth"
 
 const PROFICIENCY_LEVELS = [
@@ -42,11 +42,16 @@ export default function ProfilePage() {
   const [usernameValue, setUsernameValue] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
-  const [saved, setSaved] = useState<"username" | "password" | "proficiency" | null>(null)
+  const [saved, setSaved] = useState<"username" | "password" | "proficiency" | "exercises" | null>(null)
   const [error, setError] = useState("")
   const [proficiencyLevel, setProficiencyLevel] = useState("")
   const [nativeLanguage, setNativeLanguage] = useState("")
   const [autoIgnorePropn, setAutoIgnorePropn] = useState(true)
+  const [corefEnabled, setCorefEnabled] = useState(false)
+  const [corefPending, setCorefPending] = useState(false)
+  const [corefMessage, setCorefMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null)
+  const [exercisesEnabled, setExercisesEnabled] = useState(true)
+  const [exerciseInterval, setExerciseInterval] = useState(5)
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ["profile"],
@@ -63,6 +68,9 @@ export default function ProfilePage() {
       setProficiencyLevel(profile.proficiency_level ?? "")
       setNativeLanguage(profile.native_language_code ?? "")
       setAutoIgnorePropn(profile.auto_ignore_proper_nouns ?? true)
+      setCorefEnabled(profile.coref_enabled ?? false)
+      setExercisesEnabled(profile.exercises_enabled ?? true)
+      setExerciseInterval(profile.exercise_interval_pages ?? 5)
     }
   }, [profile])
 
@@ -75,6 +83,13 @@ export default function ProfilePage() {
 
   const proficiencyMutation = useMutation({
     mutationFn: updateProficiency,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["profile"] })
+    },
+  })
+
+  const exercisesMutation = useMutation({
+    mutationFn: updateExerciseSettings,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["profile"] })
     },
@@ -105,6 +120,43 @@ export default function ProfilePage() {
       setTimeout(() => setSaved(null), 2000)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to update learning profile")
+    }
+  }
+
+  async function handleSaveExercises() {
+    setError("")
+    setSaved(null)
+    try {
+      await exercisesMutation.mutateAsync({
+        exercises_enabled: exercisesEnabled,
+        exercise_interval_pages: exerciseInterval,
+      })
+      setSaved("exercises")
+      setTimeout(() => setSaved(null), 2000)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to update exercise settings")
+    }
+  }
+
+  async function handleCorefToggle(enabled: boolean) {
+    if (!profile?.active_language_id) return
+    setCorefEnabled(enabled)
+    setCorefPending(true)
+    setCorefMessage(null)
+    try {
+      const res = await toggleCoref(profile.active_language_id, enabled)
+      setCorefEnabled(res.coref_enabled)
+      setCorefMessage(
+        res.retokenize_enqueued
+          ? { type: "ok", text: "Coreference enabled — re-tokenization enqueued for your library." }
+          : { type: "ok", text: res.coref_enabled ? "Coreference enabled." : "Coreference disabled." }
+      )
+      setTimeout(() => setCorefMessage(null), 4000)
+    } catch (e: unknown) {
+      setCorefEnabled(!enabled)
+      setCorefMessage({ type: "err", text: e instanceof Error ? e.message : "Failed to update setting." })
+    } finally {
+      setCorefPending(false)
     }
   }
 
@@ -235,6 +287,79 @@ export default function ProfilePage() {
             Save
           </button>
         </fieldset>
+
+        {/* Coreference resolution — separate save, may trigger re-tokenization */}
+        <div className="mt-4 border-t border-zinc-800 pt-4 space-y-2">
+          <label className={`flex items-center gap-3 ${profile?.active_language_id ? "cursor-pointer" : "cursor-not-allowed opacity-50"}`}>
+            <input
+              type="checkbox"
+              checked={corefEnabled}
+              disabled={!profile?.active_language_id || corefPending}
+              onChange={(e) => handleCorefToggle(e.target.checked)}
+              className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 accent-blue-500"
+            />
+            <span className="text-sm text-zinc-300">
+              Enable coreference resolution
+              {corefPending && <Loader2 className="ml-2 inline h-3 w-3 animate-spin text-zinc-500" />}
+              <span className="ml-1 block text-xs text-zinc-500">
+                Links pronouns and noun phrases to the entities they refer to. Enabling triggers a background
+                re-tokenization of your library — this may take a few minutes.
+              </span>
+            </span>
+          </label>
+          {corefMessage && (
+            <p className={`rounded px-3 py-1.5 text-xs ${corefMessage.type === "ok" ? "bg-emerald-900/30 text-emerald-400" : "bg-red-900/30 text-red-400"}`}>
+              {corefMessage.text}
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* Exercises */}
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
+        <h2 className="mb-1 text-sm font-semibold text-zinc-300 uppercase tracking-wide">Reading Exercises</h2>
+        <p className="mb-4 text-xs text-zinc-500">
+          Periodic vocabulary drills that appear while reading. Only words you have marked as Learning in the current book are included.
+        </p>
+        <div className="space-y-4">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={exercisesEnabled}
+              onChange={(e) => setExercisesEnabled(e.target.checked)}
+              className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 accent-blue-500"
+            />
+            <span className="text-sm text-zinc-300">Enable reading exercises</span>
+          </label>
+          <div className={exercisesEnabled ? "" : "pointer-events-none opacity-40"}>
+            <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+              Interval — show exercises every N pages
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={exerciseInterval}
+                onChange={(e) => setExerciseInterval(Math.max(1, Math.min(100, Number(e.target.value))))}
+                className="w-24 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-xs text-zinc-500">pages (1 – 100)</span>
+            </div>
+          </div>
+          <button
+            onClick={handleSaveExercises}
+            disabled={exercisesMutation.isPending}
+            className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+          >
+            {exercisesMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : saved === "exercises" ? (
+              <Check className="h-3.5 w-3.5" />
+            ) : null}
+            Save
+          </button>
+        </div>
       </section>
 
       {/* Password */}

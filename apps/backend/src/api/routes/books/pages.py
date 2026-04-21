@@ -10,6 +10,8 @@ from src.api.schemas.books import (
     PageResponse,
 )
 from src.domain.content.page_enricher import collect_surface_forms, enrich_page_tokens
+from src.domain.nlp.constituency import phrases_for_page
+from src.infrastructure.db.models.content import ContentPage
 from src.infrastructure.db.models.users import User
 
 from ._deps import content_service, page_repo, word_repo
@@ -53,7 +55,7 @@ async def get_pages(
     page_responses: list[PageResponse] = []
     for p in pages:
         enriched_tokens = (
-            enrich_page_tokens(p.text, words_map, p.lemma_map)
+            enrich_page_tokens(p.text, words_map, p.lemma_map, p.tokens)
             if p.status == "ready"
             else []
         )
@@ -71,6 +73,35 @@ async def get_pages(
         )
 
     return PageListResponse(items=page_responses, total=total, page=page, limit=limit)
+
+
+@router.get("/{book_id}/pages/{page_id}/phrases")
+async def get_page_phrases(
+    book_id: uuid.UUID,
+    page_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Return phrase boundary spans extracted from constituency parse trees.
+
+    Each phrase is {"si": sentence_idx, "start": word_start, "end": word_end,
+    "type": phrase_type, "text": surface_text}.
+
+    Returns [] when constituency data is not yet available (page not tokenized
+    with a 1.11+ pipeline, or language has no constituency model).
+    """
+    content_item = await content_service.get_book(session, book_id)
+    if not content_item or content_item.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    page = await session.get(ContentPage, page_id)
+    if not page or page.content_item_id != book_id:
+        raise HTTPException(status_code=404, detail="Page not found")
+
+    if not page.constituency or not page.tokens:
+        return []
+
+    return phrases_for_page(page.constituency, page.tokens)
 
 
 @router.get("/{book_id}/chapters", response_model=list[ChapterSummary])

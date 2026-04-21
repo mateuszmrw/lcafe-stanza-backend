@@ -47,6 +47,7 @@ class DailyActivityRepository:
             .where(
                 DailyActivity.user_id == user_id,
                 DailyActivity.language_id == language_id,
+                DailyActivity.pages_read >= 3,
             )
             .order_by(DailyActivity.date.desc())
         )
@@ -79,6 +80,25 @@ class DailyActivityRepository:
                 run = 1
 
         return current, longest
+
+    async def delete_all(self, session: AsyncSession) -> int:
+        result = await session.execute(sa.delete(DailyActivity))
+        return result.rowcount  # type: ignore[return-value]
+
+    async def sum_pages_read(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        language_id: int,
+    ) -> int:
+        """Return total pages read by the user for a language across all time."""
+        result = await session.execute(
+            sa.select(sa.func.coalesce(sa.func.sum(DailyActivity.pages_read), 0)).where(
+                DailyActivity.user_id == user_id,
+                DailyActivity.language_id == language_id,
+            )
+        )
+        return int(result.scalar_one())
 
     async def get_calendar(
         self,

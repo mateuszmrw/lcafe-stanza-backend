@@ -1,12 +1,33 @@
 from __future__ import annotations
 
+import json
 import uuid
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.db.models.words import Word
+
+
+def _normalize_feats(f: "dict | str | None") -> "dict | None":
+    if isinstance(f, dict):
+        return f or None
+    if not f:
+        return None
+    result = {}
+    for kv in f.split("|"):
+        if "=" in kv:
+            k, _, v = kv.partition("=")
+            result[k] = v
+    return result or None
+
+
+def _feats_to_str(d: "dict | None") -> str:
+    if not d:
+        return ""
+    return "|".join(f"{k}={v}" for k, v in d.items())
 
 
 class WordRepository:
@@ -17,7 +38,7 @@ class WordRepository:
         language_id: int,
         rows: list[dict],
     ) -> None:
-        """Insert new words; skip existing ones (preserves current status)."""
+        """Insert new words; on conflict, update ent_type only (preserves status + skip_in_vocabulary)."""
         if not rows:
             return
         # PostgreSQL limit is 65,535 bind parameters. Word has 7 columns,
@@ -28,8 +49,18 @@ class WordRepository:
             stmt = (
                 pg_insert(Word)
                 .values(batch)
-                .on_conflict_do_nothing(
-                    index_elements=["user_id", "language_id", "word"]
+                .on_conflict_do_update(
+                    index_elements=["user_id", "language_id", "word"],
+                    set_={
+                        "ent_type": sa.text("excluded.ent_type"),
+                        "xpos": sa.text("excluded.xpos"),
+                        # morphemes: prefer new data (lemma morphemes) over old surface-form morphemes.
+                        # Fall back to existing only if the incoming value is null (morphseg unavailable).
+                        "morphemes": sa.text(
+                            "CASE WHEN excluded.morphemes IS NOT NULL AND jsonb_typeof(excluded.morphemes) != 'null' "
+                            "THEN excluded.morphemes ELSE words.morphemes END"
+                        ),
+                    },
                 )
             )
             await session.execute(stmt)
@@ -49,7 +80,12 @@ class WordRepository:
         if not words:
             return {}
         result = await session.execute(
-            sa.select(Word.id, Word.word, Word.lemma, Word.pos, Word.reading, Word.gender, Word.feats, Word.dep_head, Word.dep_rel, Word.hint, Word.status, Word.difficulty_score).where(
+            sa.select(
+                Word.id, Word.word, Word.lemma, Word.pos, Word.reading,
+                Word.gender, Word.feats, Word.dep_head, Word.dep_rel,
+                Word.hint, Word.status, Word.difficulty_score,
+                Word.ent_type, Word.xpos, Word.morphemes,
+            ).where(
                 Word.user_id == user_id,
                 Word.language_id == language_id,
                 Word.word.in_(words),
@@ -62,12 +98,15 @@ class WordRepository:
                 "pos": row.pos,
                 "reading": row.reading,
                 "gender": row.gender,
-                "feats": row.feats,
+                "feats": _feats_to_str(row.feats),
                 "dep_head": row.dep_head,
                 "dep_rel": row.dep_rel,
                 "hint": row.hint,
                 "status": row.status,
                 "difficulty_score": row.difficulty_score,
+                "ent_type": row.ent_type or "",
+                "xpos": row.xpos or "",
+                "morphemes": row.morphemes or [],
             }
             for row in result
         }
@@ -78,10 +117,14 @@ class WordRepository:
         user_id: uuid.UUID,
         language_id: int,
     ) -> list[Word]:
-        """Return all words for a user+language (for CSV export)."""
+        """Return all words for a user+language (for CSV export). Excludes entity-flagged words."""
         result = await session.execute(
             sa.select(Word)
-            .where(Word.user_id == user_id, Word.language_id == language_id)
+            .where(
+                Word.user_id == user_id,
+                Word.language_id == language_id,
+                Word.skip_in_vocabulary == False,  # noqa: E712
+            )
             .order_by(Word.created_at.desc())
         )
         return list(result.scalars().all())
@@ -99,7 +142,11 @@ class WordRepository:
     ) -> tuple[list[Word], int]:
         query = (
             sa.select(Word)
-            .where(Word.user_id == user_id, Word.language_id == language_id)
+            .where(
+                Word.user_id == user_id,
+                Word.language_id == language_id,
+                Word.skip_in_vocabulary == False,  # noqa: E712
+            )
             .order_by(Word.created_at.desc())
         )
         if status:
@@ -129,6 +176,35 @@ class WordRepository:
         result = await session.execute(sa.delete(Word))
         return result.rowcount  # type: ignore[return-value]
 
+    async def get_morpheme_family(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        language_id: int,
+        morpheme: str,
+        exclude_word: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Return words sharing a morpheme, ordered by lookup frequency."""
+        query = (
+            sa.select(Word.id, Word.word, Word.pos, Word.status)
+            .where(
+                Word.user_id == user_id,
+                Word.language_id == language_id,
+                Word.skip_in_vocabulary == False,  # noqa: E712
+                Word.morphemes.op("@>")(sa.cast(json.dumps([morpheme]), JSONB)),
+            )
+            .order_by(Word.lookup_count.desc())
+            .limit(limit)
+        )
+        if exclude_word:
+            query = query.where(Word.word != exclude_word)
+        result = await session.execute(query)
+        return [
+            {"id": str(row.id), "word": row.word, "pos": row.pos, "status": row.status}
+            for row in result
+        ]
+
     async def bulk_increment_exposure(
         self,
         session: AsyncSession,
@@ -153,7 +229,11 @@ class WordRepository:
     ) -> dict[str, int]:
         result = await session.execute(
             sa.select(Word.status, sa.func.count().label("cnt"))
-            .where(Word.user_id == user_id, Word.language_id == language_id)
+            .where(
+                Word.user_id == user_id,
+                Word.language_id == language_id,
+                Word.skip_in_vocabulary == False,  # noqa: E712
+            )
             .group_by(Word.status)
         )
         return {row.status: row.cnt for row in result}
@@ -162,7 +242,7 @@ class WordRepository:
         self, session: AsyncSession, user_id: uuid.UUID, language_id: int
     ) -> list[tuple[str, int]]:
         """Return [(YYYY-MM-DD, cumulative_known_count)] over time."""
-        day_expr = sa.func.date_trunc("day", Word.created_at).label("day")
+        day_expr = sa.func.date_trunc("day", Word.updated_at).label("day")
         result = await session.execute(
             sa.select(
                 day_expr,
@@ -174,6 +254,7 @@ class WordRepository:
                 Word.user_id == user_id,
                 Word.language_id == language_id,
                 Word.status.in_(["known", "well_known"]),
+                Word.skip_in_vocabulary == False,  # noqa: E712
             )
             .group_by(day_expr)
             .order_by(day_expr)
@@ -199,7 +280,7 @@ class WordRepository:
         result = await session.execute(
             sa.update(Word)
             .where(Word.user_id == user_id, Word.id.in_(ids))
-            .values(status=status)
+            .values(status=status, updated_at=sa.func.now())
         )
         return result.rowcount  # type: ignore[return-value]
 
@@ -216,6 +297,7 @@ class WordRepository:
         if not word:
             return None
         word.status = status
+        word.updated_at = datetime.now(timezone.utc)
         await session.flush()
         return word
 
@@ -236,7 +318,7 @@ class WordRepository:
             row.setdefault("pos", "")
             row.setdefault("reading", "")
             row.setdefault("gender", "")
-            row.setdefault("feats", "")
+            row["feats"] = _normalize_feats(row.get("feats"))
             row.setdefault("dep_head", 0)
             row.setdefault("dep_rel", "")
         stmt = (
@@ -244,7 +326,12 @@ class WordRepository:
             .values(rows)
             .on_conflict_do_update(
                 index_elements=["user_id", "language_id", "word"],
-                set_={"status": sa.text("excluded.status")},
+                set_={
+                    "status": sa.text("excluded.status"),
+                    "updated_at": sa.text(
+                        "CASE WHEN words.status != excluded.status THEN now() ELSE words.updated_at END"
+                    ),
+                },
             )
         )
         await session.execute(stmt)
@@ -273,7 +360,7 @@ class WordRepository:
             pos=pos,
             reading=reading,
             gender=gender,
-            feats=feats,
+            feats=_normalize_feats(feats),
             status=status,
         )
         if hint is not None:
@@ -281,7 +368,20 @@ class WordRepository:
         if sentence_context is not None:
             values["sentence_context"] = sentence_context
 
-        on_conflict_set: dict = {"status": status}
+        on_conflict_set: dict = {
+            "status": status,
+            # Only advance updated_at when the status actually changes so the
+            # "known over time" chart reflects when words were learned, not when
+            # the user merely opened them in the definition panel.
+            "updated_at": sa.text(
+                "CASE WHEN words.status != excluded.status THEN now() ELSE words.updated_at END"
+            ),
+            # Reset exercise_correct_rounds whenever status is manually changed
+            # to prevent stale upgrade triggers from a previous status.
+            "exercise_correct_rounds": sa.text(
+                "CASE WHEN words.status != excluded.status THEN 0 ELSE words.exercise_correct_rounds END"
+            ),
+        }
         if hint is not None:
             on_conflict_set["hint"] = hint
         if sentence_context is not None:
@@ -298,3 +398,61 @@ class WordRepository:
         ).returning(Word)
         result = await session.execute(stmt)
         return result.scalar_one()
+
+    async def increment_exercise_rounds(
+        self,
+        session: AsyncSession,
+        word_ids: list[uuid.UUID],
+    ) -> None:
+        """Increment exercise_correct_rounds for given words."""
+        if not word_ids:
+            return
+        await session.execute(
+            sa.update(Word)
+            .where(Word.id.in_(word_ids))
+            .values(exercise_correct_rounds=Word.exercise_correct_rounds + 1)
+        )
+
+    async def reset_exercise_rounds(
+        self,
+        session: AsyncSession,
+        word_ids: list[uuid.UUID],
+    ) -> None:
+        """Reset exercise_correct_rounds to 0 for given words."""
+        if not word_ids:
+            return
+        await session.execute(
+            sa.update(Word)
+            .where(Word.id.in_(word_ids))
+            .values(exercise_correct_rounds=0)
+        )
+
+    async def get_words_ready_for_upgrade(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        language_id: int,
+        threshold: int = 2,
+    ) -> list[Word]:
+        """Return words with exercise_correct_rounds >= threshold and status in ('new', 'learning').
+
+        Args:
+            session: AsyncSession for DB access.
+            user_id: UUID of the user.
+            language_id: ID of the language.
+            threshold: Minimum exercise_correct_rounds to qualify (default 2).
+
+        Returns:
+            List of Word objects ready for status upgrade.
+        """
+        result = await session.execute(
+            sa.select(Word)
+            .where(
+                Word.user_id == user_id,
+                Word.language_id == language_id,
+                Word.exercise_correct_rounds >= threshold,
+                Word.status.in_(["new", "learning"]),
+            )
+            .order_by(Word.created_at.desc())
+        )
+        return list(result.scalars().all())

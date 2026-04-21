@@ -1,8 +1,9 @@
 "use client"
 
-import { Fragment, useEffect, useRef, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react"
-import type { TokenWithStatus } from "@/src/lib/api/books"
+import { useQuery } from "@tanstack/react-query"
+import type { ConstituencyPhrase, TokenWithStatus } from "@/src/lib/api/books"
 import { useReaderStore } from "@/src/stores/reader"
 import { useReaderPageLogic } from "@/src/hooks/useReaderPageLogic"
 import { useAudioPlayerStore } from "@/src/stores/audioPlayer"
@@ -11,6 +12,8 @@ import { sentenceText } from "@/src/lib/sentences"
 import { cn } from "@/src/lib/cn"
 import { WordToken } from "./WordToken"
 import { PageOptionsMenu } from "./PageOptionsMenu"
+import { getBatchCognates, type CognateData } from "@/src/lib/api/vocabulary"
+import { getProfile } from "@/src/lib/api/users"
 
 const MAX_SELECTION_CHARS = 500
 
@@ -19,6 +22,57 @@ function isNoSpaceLanguage(code: string): boolean {
   return code.startsWith("zh") || code === "ja"
 }
 
+
+// Snap the selection range [lo, hi] to the tightest constituency phrase that
+// fully contains it. Returns the original range if no enclosing phrase found.
+function snapToConstituent(
+  lo: number,
+  hi: number,
+  tokens: TokenWithStatus[],
+  phrases: ConstituencyPhrase[],
+): [number, number] {
+  if (!phrases.length) return [lo, hi]
+
+  // Build si → sorted list of global token indices
+  const siToGlobals = new Map<number, number[]>()
+  tokens.forEach((t, i) => {
+    const arr = siToGlobals.get(t.si)
+    if (arr) arr.push(i)
+    else siToGlobals.set(t.si, [i])
+  })
+
+  const selSis = new Set(tokens.slice(lo, hi + 1).map((t) => t.si))
+  let bestLo = lo
+  let bestHi = hi
+  let bestSize = Infinity
+
+  for (const phrase of phrases) {
+    if (!selSis.has(phrase.si)) continue
+    const globals = siToGlobals.get(phrase.si)
+    if (!globals) continue
+    const plo = globals[phrase.start]
+    const phi = globals[phrase.end - 1]
+    if (plo === undefined || phi === undefined) continue
+    if (plo <= lo && phi >= hi) {
+      const size = phi - plo
+      if (size < bestSize) {
+        bestSize = size
+        bestLo = plo
+        bestHi = phi
+      }
+    }
+  }
+
+  return [bestLo, bestHi]
+}
+
+function getTokenIndexAtPoint(x: number, y: number): number | null {
+  const el = document.elementFromPoint(x, y)
+  const tokenEl = el?.closest("[data-token-index]")
+  if (!tokenEl) return null
+  const idx = parseInt(tokenEl.getAttribute("data-token-index") ?? "", 10)
+  return isNaN(idx) ? null : idx
+}
 
 interface ParagraphsProps {
   tokens: TokenWithStatus[]
@@ -29,7 +83,10 @@ interface ParagraphsProps {
   fontSizeClass: string
   lineSpacingClass: string
   phraseTokenIndices: Set<number>
+  hoveredChainId: number | null
+  cognateMap: Record<string, CognateData>
   onTokenClick: (token: TokenWithStatus, e: React.MouseEvent<HTMLSpanElement>) => void
+  onHoverChain: (chainId: number | null) => void
 }
 
 function Paragraphs({
@@ -41,7 +98,10 @@ function Paragraphs({
   fontSizeClass,
   lineSpacingClass,
   phraseTokenIndices,
+  hoveredChainId,
+  cognateMap,
   onTokenClick,
+  onHoverChain,
 }: ParagraphsProps) {
   // Group by paragraph while preserving flat index
   const groups: Array<Array<{ token: TokenWithStatus; idx: number }>> = []
@@ -52,48 +112,106 @@ function Paragraphs({
 
   return (
     <div className="space-y-5">
-      {groups.map((paraTokens, pi) => (
-        <p key={pi} className={`${lineSpacingClass} ${fontSizeClass} text-zinc-200`}>
-          {paraTokens.map(({ token, idx }, i) => {
-            const isHighlighted =
-              selectionRange !== null &&
-              idx >= selectionRange[0] &&
-              idx <= selectionRange[1]
-            const prevToken = paraTokens[i - 1]?.token
-            const prevIdx = paraTokens[i - 1]?.idx
-            const prevW = prevToken?.w ?? ""
-            const isClosingPunct = /^[.,!?;:)\]»…\-—–。，！？；：」』]/.test(token.w)
-            const prevIsOpeningPunct = /^[(\[«「『]$/.test(prevW)
-            const spaceBefore = !noWordSpacing && i > 0 && !isClosingPunct && !prevIsOpeningPunct
-            const isActiveSentence = activeSentenceIndex !== null && token.si === activeSentenceIndex
-            const prevIsActiveSentence = activeSentenceIndex !== null && prevToken?.si === activeSentenceIndex
-            const spaceIsActive = spaceBefore && isActiveSentence && prevIsActiveSentence
-            const isSpaceInPhrase = spaceBefore && phraseTokenIndices.has(idx) && prevIdx !== undefined && phraseTokenIndices.has(prevIdx)
-            const spaceClass = cn(
-              spaceIsActive && "underline decoration-amber-400 decoration-2 underline-offset-2",
-              isSpaceInPhrase && "bg-emerald-500/30",
-            )
-            return (
-              <Fragment key={`${pi}-${token.si}-${i}`}>
-                {spaceBefore && (
-                  spaceClass
-                    ? <span className={spaceClass}> </span>
-                    : " "
-                )}
-                <WordToken
-                  token={token}
-                  tokenIndex={idx}
-                  isActive={activeToken?.w === token.w && activeToken?.si === token.si}
-                  isHighlighted={isHighlighted}
-                  isAudioActive={isActiveSentence}
-                  isPhraseToken={phraseTokenIndices.has(idx)}
-                  onClick={onTokenClick}
-                />
-              </Fragment>
-            )
-          })}
-        </p>
-      ))}
+      {groups.map((paraTokens, pi) => {
+        // Collect "segments": consecutive same-mwt tokens become one MWT group.
+        type Segment =
+          | { mwt: false; entry: { token: TokenWithStatus; idx: number }; paraI: number }
+          | { mwt: true; entries: { token: TokenWithStatus; idx: number }[]; paraI: number }
+        const segments: Segment[] = []
+        paraTokens.forEach((entry, paraI) => {
+          const gid = entry.token.mwt_group_id
+          if (gid != null) {
+            const last = segments[segments.length - 1]
+            if (last?.mwt && last.entries[0].token.mwt_group_id === gid) {
+              last.entries.push(entry)
+              return
+            }
+            segments.push({ mwt: true, entries: [entry], paraI })
+          } else {
+            segments.push({ mwt: false, entry, paraI })
+          }
+        })
+
+        return (
+          <p key={pi} className={`${lineSpacingClass} ${fontSizeClass} text-zinc-200`}>
+            {segments.map((seg, si) => {
+              // For space-before logic, get the first entry and the previous segment's last entry
+              const firstEntry = seg.mwt ? seg.entries[0] : seg.entry
+              const prevSeg = segments[si - 1]
+              const prevEntry = prevSeg
+                ? prevSeg.mwt
+                  ? prevSeg.entries[prevSeg.entries.length - 1]
+                  : prevSeg.entry
+                : undefined
+              const prevW = prevEntry?.token.w ?? ""
+              const isClosingPunct = /^[.,!?;:)\]»…\-—–。，！？；：」』]/.test(firstEntry.token.w)
+              const prevIsOpeningPunct = /^[(\[«「『]$/.test(prevW)
+              const spaceBefore = !noWordSpacing && si > 0 && !isClosingPunct && !prevIsOpeningPunct
+              const isActiveSentence = activeSentenceIndex !== null && firstEntry.token.si === activeSentenceIndex
+              const prevIsActiveSentence = activeSentenceIndex !== null && prevEntry?.token.si === activeSentenceIndex
+              const spaceIsActive = spaceBefore && isActiveSentence && prevIsActiveSentence
+              const isSpaceInPhrase = spaceBefore && phraseTokenIndices.has(firstEntry.idx) && prevEntry !== undefined && phraseTokenIndices.has(prevEntry.idx)
+              const isSpaceInSelection = spaceBefore && selectionRange !== null &&
+                firstEntry.idx >= selectionRange[0] && firstEntry.idx <= selectionRange[1] &&
+                prevEntry !== undefined && prevEntry.idx >= selectionRange[0] && prevEntry.idx <= selectionRange[1]
+              const spaceClass = cn(
+                spaceIsActive && "underline decoration-amber-400 decoration-2 underline-offset-2",
+                isSpaceInPhrase && !isSpaceInSelection && "bg-emerald-500/30",
+                isSpaceInSelection && "bg-violet-500/40",
+              )
+
+              if (!seg.mwt) {
+                const { token, idx } = seg.entry
+                const isHighlighted = selectionRange !== null && idx >= selectionRange[0] && idx <= selectionRange[1]
+                return (
+                  <Fragment key={`${pi}-${si}`}>
+                    {spaceBefore && (spaceClass ? <span className={spaceClass}> </span> : " ")}
+                    <WordToken
+                      token={token}
+                      tokenIndex={idx}
+                      isActive={activeToken?.w === token.w && activeToken?.si === token.si}
+                      isHighlighted={isHighlighted}
+                      isAudioActive={activeSentenceIndex !== null && token.si === activeSentenceIndex}
+                      isPhraseToken={phraseTokenIndices.has(idx)}
+                      isCorefHighlighted={hoveredChainId !== null && (token.cc ?? 0) === hoveredChainId && hoveredChainId > 0}
+                      cognateData={cognateMap[token.l?.toLowerCase() ?? ""]}
+                      onClick={onTokenClick}
+                      onHoverChain={onHoverChain}
+                    />
+                  </Fragment>
+                )
+              }
+
+              // MWT group — no space between members, dotted underline connects them
+              return (
+                <Fragment key={`${pi}-${si}`}>
+                  {spaceBefore && (spaceClass ? <span className={spaceClass}> </span> : " ")}
+                  <span className="inline-flex border-b border-dotted border-zinc-500/60 pb-px">
+                    {seg.entries.map(({ token, idx }, mi) => {
+                      const isHighlighted = selectionRange !== null && idx >= selectionRange[0] && idx <= selectionRange[1]
+                      return (
+                        <WordToken
+                          key={mi}
+                          token={token}
+                          tokenIndex={idx}
+                          isActive={activeToken?.w === token.w && activeToken?.si === token.si}
+                          isHighlighted={isHighlighted}
+                          isAudioActive={activeSentenceIndex !== null && token.si === activeSentenceIndex}
+                          isPhraseToken={phraseTokenIndices.has(idx)}
+                          isCorefHighlighted={hoveredChainId !== null && (token.cc ?? 0) === hoveredChainId && hoveredChainId > 0}
+                          cognateData={cognateMap[token.l?.toLowerCase() ?? ""]}
+                          onClick={onTokenClick}
+                          onHoverChain={onHoverChain}
+                        />
+                      )
+                    })}
+                  </span>
+                </Fragment>
+              )
+            })}
+          </p>
+        )
+      })}
     </div>
   )
 }
@@ -110,7 +228,7 @@ interface ReadingPaneProps {
 
 export function ReadingPane({ bookId, page, totalPages, languageCode, languageId, onPageChange, onFinish }: ReadingPaneProps) {
   const noWordSpacing = isNoSpaceLanguage(languageCode)
-  const { activeToken, selectedText, setActiveToken, setSelectedText, setPanelAnchor, setSentenceContext, clearActive } = useReaderStore()
+  const { activeToken, selectedText, setActiveToken, setSelectedText, setPanelAnchor, setSentenceContext, setActiveCognateData, clearActive } = useReaderStore()
   // Select individual slices so audioPlayer tick() (fires 5x/sec) doesn't
   // re-render the whole pane — only activeSentenceIndex updates matter here.
   const activeSentenceIndex = useAudioPlayerStore((s) => s.activeSentenceIndex)
@@ -123,6 +241,17 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, languageId
   // on the token under the pointer does not re-open word mode.
   const selectionJustCommittedRef = useRef(false)
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null)
+
+  // Clear token highlight when the panel is dismissed from outside ReadingPane
+  // (e.g. DefinitionPanel backdrop click calls clearActive() but can't reach setSelectionRange)
+  useEffect(() => {
+    if (!selectedText) setSelectionRange(null)
+  }, [selectedText])
+
+  const isDraggingRef = useRef(false)
+  const dragStartIdxRef = useRef<number | null>(null)
+  const dragPointerIdRef = useRef<number | null>(null)
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Scroll position restore
   const scrollRestoredRef = useRef(false)
@@ -143,11 +272,28 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, languageId
     return () => { clearTimeout(timer); container.removeEventListener("scroll", handleScroll) }
   }, [bookId, page])
 
-  const { currentPage, isLoading, phraseTokenIndices } = useReaderPageLogic({
+  const [hoveredChainId, setHoveredChainId] = useState<number | null>(null)
+  const handleHoverChain = useCallback((id: number | null) => setHoveredChainId(id), [])
+
+  const { currentPage, isLoading, phraseTokenIndices, constituentPhrases } = useReaderPageLogic({
     bookId,
     page,
     languageId,
     noWordSpacing,
+  })
+
+  const l2Code = languageCode.slice(0, 2).toLowerCase()
+  const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile, staleTime: Infinity })
+  const nativeLang = profile?.native_language_code ?? null
+  const pageLemmas = useMemo(() => {
+    if (!currentPage) return []
+    return [...new Set(currentPage.tokens.map((t) => t.l?.toLowerCase()).filter(Boolean))] as string[]
+  }, [currentPage])
+  const { data: cognateMap = {} as Record<string, CognateData> } = useQuery({
+    queryKey: ["cognates", bookId, page, l2Code, nativeLang],
+    queryFn: () => getBatchCognates(pageLemmas, l2Code, nativeLang ?? undefined),
+    enabled: pageLemmas.length > 0 && !!nativeLang && nativeLang !== l2Code,
+    staleTime: Infinity,
   })
 
   // Restore scroll position once data loads for this page
@@ -160,62 +306,94 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, languageId
     if (saved) container.scrollTop = Number(saved)
   }, [currentPage, bookId, page])
 
-  /**
-   * Called on mouseup and touchend. Reads the native browser selection and,
-   * if it spans 2+ tokens, commits it as a phrase selection.
-   */
-  function commitNativeSelection() {
-    const sel = window.getSelection()
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !currentPage) return
+  function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (!e.isPrimary || e.button !== 0) return
+    const idx = getTokenIndexAtPoint(e.clientX, e.clientY)
+    dragStartIdxRef.current = idx
+    dragPointerIdRef.current = e.pointerId
+    isDraggingRef.current = false
+    // Do NOT setPointerCapture here — it redirects the click event to the container,
+    // breaking child onClick handlers. Capture is deferred to when drag actually starts.
+    if (idx !== null && currentPage?.tokens[idx]) {
+      const si = currentPage.tokens[idx].si
+      longPressTimerRef.current = setTimeout(() => {
+        longPressTimerRef.current = null
+        dragStartIdxRef.current = null
+        isDraggingRef.current = false
+        const target = seekToSentence(si)
+        if (target) seekTo(target.ms, target.audioFile)
+        // Suppress the click that fires after pointerup
+        selectionJustCommittedRef.current = true
+      }, 500)
+    }
+  }
 
-    const range = sel.getRangeAt(0)
-    const container = containerRef.current
-    if (!container || !range.intersectsNode(container)) return
-
-    const selectedString = sel.toString().trim()
-    if (!selectedString || selectedString.length < 2) return
-
-    // Find all token elements that the selection range covers
-    const tokenEls = container.querySelectorAll("[data-token-index]")
-    const indices: number[] = []
-    tokenEls.forEach((el) => {
-      if (range.intersectsNode(el)) {
-        const idx = parseInt(el.getAttribute("data-token-index") ?? "", 10)
-        if (!isNaN(idx)) indices.push(idx)
+  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!e.isPrimary || dragStartIdxRef.current === null) return
+    const idx = getTokenIndexAtPoint(e.clientX, e.clientY)
+    if (idx === null || idx === dragStartIdxRef.current) return
+    if (!isDraggingRef.current) {
+      isDraggingRef.current = true
+      // Cancel long press — user is dragging, not holding
+      if (longPressTimerRef.current !== null) {
+        clearTimeout(longPressTimerRef.current)
+        longPressTimerRef.current = null
       }
-    })
+      // Capture pointer now so we track movement outside the container
+      if (dragPointerIdRef.current !== null) {
+        containerRef.current?.setPointerCapture(dragPointerIdRef.current)
+      }
+    }
+    const lo = Math.min(dragStartIdxRef.current, idx)
+    const hi = Math.max(dragStartIdxRef.current, idx)
+    setSelectionRange([lo, hi])
+  }
 
-    if (indices.length < 2) {
-      setSelectionRange(null)
+  function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (!e.isPrimary) return
+    if (longPressTimerRef.current !== null) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+    const startIdx = dragStartIdxRef.current
+    dragStartIdxRef.current = null
+    dragPointerIdRef.current = null
+    if (!isDraggingRef.current || startIdx === null || !currentPage) {
+      isDraggingRef.current = false
       return
     }
+    isDraggingRef.current = false
 
-    const lo = Math.min(...indices)
-    const hi = Math.max(...indices)
+    const endIdx = getTokenIndexAtPoint(e.clientX, e.clientY) ?? startIdx
+    let lo = Math.min(startIdx, endIdx)
+    let hi = Math.max(startIdx, endIdx)
+    if (hi <= lo) { setSelectionRange(null); return }
+
+    ;[lo, hi] = snapToConstituent(lo, hi, currentPage.tokens, constituentPhrases)
     setSelectionRange([lo, hi])
 
     const tokens = currentPage.tokens.slice(lo, hi + 1)
     const sep = noWordSpacing ? "" : " "
     const text = tokens.map((t) => t.w).join(sep).trim()
+    if (!text || text.length < 2) { setSelectionRange(null); return }
 
     setSelectedText(text.slice(0, MAX_SELECTION_CHARS * 2), tokens)
     selectionJustCommittedRef.current = true
 
-    // Anchor the panel near the selection
-    const selRect = range.getBoundingClientRect()
-    if (selRect.width > 0) {
-      setPanelAnchor({ x: selRect.left + selRect.width / 2, top: selRect.top, bottom: selRect.bottom })
+    const container = containerRef.current
+    if (container) {
+      const firstEl = container.querySelector(`[data-token-index="${lo}"]`)
+      const lastEl = container.querySelector(`[data-token-index="${hi}"]`)
+      if (firstEl && lastEl) {
+        const firstRect = firstEl.getBoundingClientRect()
+        const lastRect = lastEl.getBoundingClientRect()
+        setPanelAnchor({
+          x: e.clientX,
+          top: Math.min(firstRect.top, lastRect.top),
+          bottom: Math.max(firstRect.bottom, lastRect.bottom),
+        })
+      }
     }
-
-    // Replace the native selection highlight with our custom token highlight
-    sel.removeAllRanges()
-  }
-
-  function handleTouchEnd() {
-    // Small delay to let iOS finalise the selection object before we read it.
-    // Page navigation via swipe is intentionally disabled — it fought with
-    // phrase selection on iPad. Use the Previous/Next buttons or keyboard shortcuts.
-    setTimeout(commitNativeSelection, 50)
   }
 
   function handleTokenClick(token: TokenWithStatus, e: React.MouseEvent<HTMLSpanElement>) {
@@ -233,8 +411,10 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, languageId
       setActiveToken(null)
       setPanelAnchor(null)
       setSentenceContext(null)
+      setActiveCognateData(null)
     } else {
       setActiveToken(token)
+      setActiveCognateData(cognateMap[token.l?.toLowerCase() ?? ""] ?? null)
       const rect = e.currentTarget.getBoundingClientRect()
       setPanelAnchor({ x: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom })
 
@@ -245,9 +425,6 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, languageId
       }
     }
 
-    // Seek audio to the start of the clicked sentence (no-op if no alignments)
-    const target = seekToSentence(token.si)
-    if (target) seekTo(target.ms, target.audioFile)
   }
 
   /**
@@ -261,17 +438,12 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, languageId
     const target = e.target as HTMLElement | null
     if (target?.closest("[data-token-index]")) return
 
-    // Desktop: commitNativeSelection ran on mouseup and set the flag. Consume
-    // it so this click isn't treated as a "dismiss" gesture.
+    // handlePointerUp ran before this click and set the flag — consume it so the
+    // click isn't treated as a "dismiss" gesture after a drag selection.
     if (selectionJustCommittedRef.current) {
       selectionJustCommittedRef.current = false
       return
     }
-
-    // iPad: commitNativeSelection is queued on a setTimeout and hasn't run yet.
-    // If there's still a live browser selection spanning content, we're mid-gesture.
-    const sel = typeof window !== "undefined" ? window.getSelection() : null
-    if (sel && !sel.isCollapsed && sel.toString().trim().length > 1) return
 
     if (activeToken || selectedText) {
       clearActive()
@@ -283,11 +455,11 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, languageId
     <div className="flex h-full flex-col">
       <div
         ref={containerRef}
-        className="flex-1 overflow-y-auto px-12 py-8"
-        onMouseUp={commitNativeSelection}
-        onTouchEnd={handleTouchEnd}
+        className="select-none flex-1 overflow-y-auto px-12 py-8"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
         onClick={handleBackgroundClick}
-        onDragStart={(e) => e.preventDefault()}
       >
         {isLoading ? (
           <div className="animate-pulse space-y-3">
@@ -317,7 +489,10 @@ export function ReadingPane({ bookId, page, totalPages, languageCode, languageId
                 fontSizeClass={FONT_SIZE_CLASS[fontSize]}
                 lineSpacingClass={LINE_SPACING_CLASS[lineSpacing]}
                 phraseTokenIndices={phraseTokenIndices}
+                hoveredChainId={hoveredChainId}
+                cognateMap={cognateMap}
                 onTokenClick={handleTokenClick}
+                onHoverChain={handleHoverChain}
               />
             )}
           </div>

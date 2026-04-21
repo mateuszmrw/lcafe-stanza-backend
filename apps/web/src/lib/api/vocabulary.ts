@@ -118,3 +118,55 @@ export async function recordExposures(
     body: JSON.stringify({ lemmas, language_id: languageId }),
   })
 }
+
+export interface WordFamilyItem {
+  id: string
+  word: string
+  pos: string
+  status: string
+  translation?: string | null
+}
+
+export async function getMorphemeFamily(
+  morpheme: string,
+  languageId: number,
+  langCode?: string,
+): Promise<{ results: WordFamilyItem[] }> {
+  const params = new URLSearchParams({ morpheme, language_id: String(languageId) })
+  if (langCode) params.set("lang_code", langCode)
+  return apiClient(`/vocabulary/morpheme-family?${params}`)
+}
+
+export interface CognateResult {
+  cognate_type: "true" | "false_friend" | "partial" | "borrowing" | null
+  l1_lemma: string | null
+  similarity_score: number | null
+  semantic_score: number | null
+  l1_meaning: string | null
+  l2_meaning: string | null
+}
+
+export interface CognateData {
+  cognate_type: "true" | "false_friend" | "partial" | "borrowing"
+  l1_lemma: string | null
+  l1_meaning: string | null
+  l2_meaning: string | null
+  similarity_score: number | null
+}
+
+export async function getCognate(lemma: string, l2: string, l1?: string): Promise<CognateResult> {
+  const params = new URLSearchParams({ lemma, l2 })
+  if (l1) params.set("l1", l1)
+  return apiClient(`/vocabulary/cognate?${params}`)
+}
+
+export async function getBatchCognates(
+  lemmas: string[],
+  l2: string,
+  l1?: string,
+): Promise<Record<string, CognateData>> {
+  if (!lemmas.length) return {}
+  const params = new URLSearchParams({ lemmas: lemmas.join(","), l2 })
+  if (l1) params.set("l1", l1)
+  return apiClient(`/vocabulary/cognates/batch?${params}`)
+}
