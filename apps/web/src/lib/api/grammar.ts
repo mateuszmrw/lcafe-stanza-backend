@@ -4,6 +4,8 @@ export interface GrammarTokenInput {
   w: string
   l: string
   pos: string
+  x?: string    // language-specific POS tag (xpos)
+  g?: string    // grammatical gender
   feats: string
   dep_head?: number
   dep_rel?: string

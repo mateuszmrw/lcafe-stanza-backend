@@ -119,7 +119,7 @@ def _build_user_prompt(
     register: str | None = None,
 ) -> str:
     morph_rows = "\n".join(
-        f"  {t.w!r:20s} | lemma={t.l!r:20s} | pos={t.pos:10s} | xpos={t.x or '—':20s} | feats={t.feats or '—':35s} | head={t.dep_head:2d} | rel={t.dep_rel or '—'}"
+        f"  {t.w!r:20s} | lemma={t.l!r:20s} | pos={t.pos:10s} | xpos={t.x or '—':15s} | gender={t.g or '—':6s} | feats={t.feats or '—':35s} | head={t.dep_head:2d} | rel={t.dep_rel or '—'}"
         for t in tokens
     )
     dep_summary = _build_dep_summary(tokens)

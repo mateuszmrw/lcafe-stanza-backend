@@ -6,6 +6,7 @@ class TokenInput(BaseModel):
     l: str
     pos: str
     x: str = ""   # language-specific POS tag (xpos)
+    g: str = ""   # grammatical gender
     feats: str = ""
     dep_head: int = 0   # 1-based head index (0 = root)
     dep_rel: str = ""   # UD relation label, e.g. "nsubj", "obj"

@@ -240,7 +240,7 @@ const NER_TYPE_LABELS: Record<string, string> = {
 
 export function DefinitionPanel({ token, language, languageId, languageCode, bookId, currentPage, register, readerConfig }: DefinitionPanelProps) {
   const cfg: ReaderConfig = readerConfig ?? READER_CONFIG_DEFAULTS
-  const { clearActive, setActiveToken, setSelectedText, activeToken, selectedText, selectedTokens, panelAnchor, sentenceContext } = useReaderStore()
+  const { clearActive, setActiveToken, setSelectedText, activeToken, selectedText, selectedTokens, sentenceTokens, panelAnchor, sentenceContext } = useReaderStore()
   const queryClient = useQueryClient()
 
   // Tab state for word mode (LingQ-style)
@@ -273,9 +273,19 @@ export function DefinitionPanel({ token, language, languageId, languageCode, boo
 
   const grammarMutation = useMutation<GrammarExplainResponse, Error>({
     mutationFn: () => {
-      const tokens = (selectedTokens ?? [])
+      const source = sentenceTokens ?? selectedTokens ?? []
+      const tokens = source
         .filter((t) => t.pos !== "PUNCT")
-        .map((t) => ({ w: t.w, l: t.l, pos: t.pos, feats: t.f ?? "", dep_head: t.dep_head ?? 0, dep_rel: t.dep_rel ?? "" }))
+        .map((t) => ({
+          w: t.w,
+          l: t.l,
+          pos: t.pos,
+          x: t.x ?? "",
+          g: t.g ?? "",
+          feats: t.f ?? "",
+          dep_head: t.dep_head ?? 0,
+          dep_rel: t.dep_rel ?? "",
+        }))
       return explainGrammar(tokens, languageCode, register)
     },
   })
